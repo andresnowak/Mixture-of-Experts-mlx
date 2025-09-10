@@ -20,7 +20,7 @@ class StoryDataset:
         # Here using a [BOS] token doesn't make sense because we are training from the corpus by grabbing parts of a very big text (so majority of times not beggining of sentences)
 
         data_size, vocab_size = len(data), len(chars)
-        print(f"data has {data_size} and vocab size is {vocab_size}")
+        print(f"data has {data_size} tokens and the vocab size is {vocab_size}")
 
         self.stoi = {char: num for num, char in enumerate(chars)}
         self.itos = {num: char for num, char in enumerate(chars)}
