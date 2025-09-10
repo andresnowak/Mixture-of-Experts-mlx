@@ -3,7 +3,10 @@ import mlx.nn as nn
 
 import numpy as np
 
-from .utils import multinomial
+from typing import Union
+
+from .mlx_extension import multinomial
+from .moe import MoE, FFN
 
 # https://arxiv.org/abs/1706.03762, but we use pre-norm and dropout
 
@@ -88,14 +91,20 @@ class MultiHeadAttention(nn.Module):
 
 
 class TransformerBlock(nn.Module):
-    def __init__(self, emb_dim: int, ff_dim: int, num_heads: int, prob: float = 0.5):
+    def __init__(
+        self,
+        emb_dim: int,
+        ff_dim: int,
+        num_heads: int,
+        ff_function: Union[FFN, MoE],
+        prob: float = 0.5,
+    ):
         # ff_dim commonly is 4 times the size of emb_dim
         super().__init__()
 
         self.attn_block = MultiHeadAttention(emb_dim, num_heads)
 
-        self.ff_1 = nn.Linear(emb_dim, ff_dim)
-        self.ff_2 = nn.Linear(ff_dim, emb_dim)
+        self.ff = ff_function
         self.dropout = nn.Dropout(prob)
 
         self.norm_1 = nn.LayerNorm(emb_dim)
@@ -119,8 +128,11 @@ class TransformerBlock(nn.Module):
         attention = self.attn_block(self.norm_1(x), attn_mask)
         x = x + attention
 
-        ff = self.ff_2(mx.maximum(self.ff_1(self.norm_2(x)), 0))
-        x = x + self.dropout(ff)
+        ff = self.ff(self.norm_2(x))
+
+        if isinstance(self.ff, FFN):
+            ff = self.dropout(ff)
+        x = x + ff
 
         return x  # (Batch, seq_len, emb_dim)
 
@@ -141,7 +153,8 @@ class DecoderTransformer(nn.Module):
         self.pos_embedding = nn.init.he_normal()(mx.zeros((max_len, emb_dim)))
 
         self.transformer_blocks = [
-            TransformerBlock(emb_dim, ff_dim, num_heads, 0.5) for i in range(layers)
+            TransformerBlock(emb_dim, ff_dim, num_heads, FFN(emb_dim, ff_dim), 0.5)
+            for i in range(layers)
         ]
 
         self.proj_ff = nn.Linear(emb_dim, vocab_dim, bias=False)
@@ -201,32 +214,141 @@ class DecoderTransformer(nn.Module):
             The raw logits output tensor of shape (batch=1, seq_len).
         """
 
-        starting_len = sequence.shape[-1]
-
-        sequence = mx.expand_dims(sequence, -1)
-
-        for _ in range(max_new_tokens - starting_len):
-            logits = self(sequence)  # (batch=1, seq_len, vocab_dim)
-
-            if top_k is not None:
-                top_logits = mx.topk(
-                    logits, k=top_k, axis=-1
-                )  # only returns the values not the positions
-
-                logits = mx.where(logits < top_logits[..., -1:], -float("inf"), logits)
-
-            probs = mx.softmax(
-                logits[:, -1, :] / temperature, axis=-1
-            )  # we only want the last logit for the generation (this is our target)
+        return generate(self, sequence, max_new_tokens, temperature, do_sample, top_k)
 
 
-            if do_sample:
-                idx_next = multinomial(probs, num_samples=1)
-            else:
-                idx_next = probs.argmax(axis=-1, keepdims=True)
+class MoEDecoderTransformer(nn.Module):
+    def __init__(
+        self,
+        max_len: int,
+        vocab_dim: int,
+        emb_dim: int,
+        num_heads: int,
+        ff_dim: int,
+        shared_experts: int,
+        routed_experts: int,
+        top_k_routers: int,
+        layers: int,
+    ):
+        super().__init__()
 
-            sequence = mx.expand_dims(
-                mx.concat([sequence.squeeze(-1), idx_next], axis=-1), -1
+        self.embedding = nn.Embedding(vocab_dim, emb_dim)
+        self.pos_embedding = nn.init.he_normal()(mx.zeros((max_len, emb_dim)))
+
+        self.transformer_blocks = [
+            TransformerBlock(
+                emb_dim, ff_dim, num_heads, MoE(emb_dim, ff_dim, shared_experts, routed_experts, top_k_routers), 0.5
             )
+            for i in range(layers)
+        ]
 
-        return sequence.squeeze(-1)
+        self.proj_ff = nn.Linear(emb_dim, vocab_dim, bias=False)
+
+    def __call__(self, x: mx.array) -> mx.array:
+        """
+        MoE Decoder Transformer
+
+        Parameters
+        ----------
+        x : array
+            Input sequence of shape (batch, seq_len, 1).
+
+        Returns
+        -------
+        array
+            The raw logits output tensor of shape (batch, seq_len, vocab_dim).
+        """
+
+        assert len(x.shape) == 3
+
+        _, seq_len, _ = x.shape
+
+        attn_mask = mx.tril(mx.ones((seq_len, seq_len)), k=0)
+
+        embedding = self.embedding(x.squeeze(axis=-1))
+        pos_embedding = self.pos_embedding[:seq_len, :]
+
+        x = embedding + pos_embedding
+
+        for transformer_block in self.transformer_blocks:
+            x = transformer_block(x, attn_mask)
+
+        x = self.proj_ff(x)
+
+        return x  # raw logits in the form (batch, seq_len, vocab_dim)
+
+    def generate(
+        self,
+        sequence: mx.array,
+        max_new_tokens: int,
+        temperature: float = 1.0,
+        do_sample: bool = False,
+        top_k: int | None = None,
+    ):
+        """
+        Decoder Transformer
+
+        Parameters
+        ----------
+        sequence : array
+            Input sequence of shape (batch=1, seq_len).
+
+        Returns
+        -------
+        array
+            The raw logits output tensor of shape (batch=1, seq_len).
+        """
+
+        return generate(self, sequence, max_new_tokens, temperature, do_sample, top_k)
+
+
+def generate(
+    transformer: nn.Module,
+    sequence: mx.array,
+    max_new_tokens: int,
+    temperature: float = 1.0,
+    do_sample: bool = False,
+    top_k: int | None = None,
+):
+    """
+    Decoder Transformer
+
+    Parameters
+    ----------
+    sequence : array
+        Input sequence of shape (batch=1, seq_len).
+
+    Returns
+    -------
+    array
+        The raw logits output tensor of shape (batch=1, seq_len).
+    """
+
+    starting_len = sequence.shape[-1]
+
+    sequence = mx.expand_dims(sequence, -1)
+
+    for _ in range(max_new_tokens - starting_len):
+        logits = transformer(sequence)  # (batch=1, seq_len, vocab_dim)
+
+        if top_k is not None:
+            top_logits = mx.topk(
+                logits, k=top_k, axis=-1
+            )  # only returns the values not the positions
+
+            logits = mx.where(logits < top_logits[..., -1:], -float("inf"), logits)
+
+        probs = mx.softmax(
+            logits[:, -1, :] / temperature, axis=-1
+        )  # we only want the last logit for the generation (this is our target)
+
+        if do_sample:
+            idx_next = multinomial(probs, num_samples=1)
+        else:
+            idx_next = probs.argmax(axis=-1, keepdims=True)
+
+        sequence = mx.expand_dims(
+            mx.concat([sequence.squeeze(-1), idx_next], axis=-1), -1
+        )
+
+    return sequence.squeeze(-1)

@@ -7,7 +7,7 @@ import mlx.nn as nn
 import numpy as np
 from tqdm import tqdm
 
-from src.transformer import DecoderTransformer
+from src.transformer import DecoderTransformer, MoEDecoderTransformer
 from src.utils import load_config_basic
 
 
@@ -144,14 +144,13 @@ def parse_args() -> argparse.Namespace:
 
     # misc
     parser.add_argument(
-        "--checkpoint", type=str, default=None, help="Path to a saved .safetensors file or to save tensor file"
+        "--checkpoint",
+        type=str,
+        default=None,
+        help="Path to a saved .safetensors file or to save tensor file",
     )
-    parser.add_argument(
-        "--config", type=str, default=None, help="Path to .yaml config"
-    )
-    parser.add_argument(
-        "--train", action="store_true", help="If set will train"
-    )
+    parser.add_argument("--config", type=str, default=None, help="Path to .yaml config")
+    parser.add_argument("--train", action="store_true", help="If set will train")
 
     return parser.parse_args()
 
@@ -161,22 +160,37 @@ if __name__ == "__main__":
 
     config = load_config_basic(args.config)
 
-    lr = config['training']['learning_rate']
-    epochs = config['training']['epochs']
-    batch_size = config['training']['batch_size']
-    seq_len = config['training']['sequence_length']
+    lr = config["training"]["learning_rate"]
+    epochs = config["training"]["epochs"]
+    batch_size = config["training"]["batch_size"]
+    seq_len = config["training"]["sequence_length"]
 
     text = open(config["data"]["source_file"], "r").read()
     train_dataset = StoryDataset(text, batch_size, seq_len)
 
-    model = DecoderTransformer(
-        max_len=seq_len,
-        vocab_dim=train_dataset.vocab_size,
-        emb_dim=config['model']['architecture']["embedding_dimension"],
-        num_heads=config['model']['architecture']['attention_heads'],
-        layers=config['model']['architecture']['num_layers'],
-        ff_dim=config['model']['architecture']['feedforward_dimension'],
-    )
+    if config["model"]["type"] == "DecoderTransformer":
+        model = DecoderTransformer(
+            max_len=seq_len,
+            vocab_dim=train_dataset.vocab_size,
+            emb_dim=config["model"]["architecture"]["embedding_dimension"],
+            num_heads=config["model"]["architecture"]["attention_heads"],
+            layers=config["model"]["architecture"]["num_layers"],
+            ff_dim=config["model"]["architecture"]["feedforward_dimension"],
+        )
+    elif config["model"]["type"] == "MoEDecoderTransformer":
+        model = MoEDecoderTransformer(
+            max_len=seq_len,
+            vocab_dim=train_dataset.vocab_size,
+            emb_dim=config["model"]["architecture"]["embedding_dimension"],
+            num_heads=config["model"]["architecture"]["attention_heads"],
+            layers=config["model"]["architecture"]["num_layers"],
+            ff_dim=config["model"]["architecture"]["feedforward_dimension"],
+            shared_experts=config["model"]["architecture"]["shared_experts"],
+            routed_experts=config["model"]["architecture"]["routed_experts"],
+            top_k_routers=config["model"]["architecture"]["top_k_routers"],
+        )
+    else:
+        raise Exception("Incorrect Model type specified")
 
     print(f"Save file checkpoint: {args.checkpoint}")
 
@@ -189,7 +203,7 @@ if __name__ == "__main__":
 
     generation = model.generate(
         mx.array([train_dataset.stoi[s] for s in "Would"]).reshape(1, -1),
-        config['model']['architecture']['max_length'],
+        config["model"]["architecture"]["max_length"],
         do_sample=True,
         top_k=3,
     )

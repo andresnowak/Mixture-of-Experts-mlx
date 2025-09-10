@@ -3,11 +3,12 @@ name = "moe-for-multilingual"
 version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 dependencies = [
     "accelerate>=1.10.1",
     "kernels>=0.10.0",
     "mlx-lm>=0.27.1",
+    "safetensors>=0.6.2",
     "torch>=2.8.0",
     "tqdm>=4.67.1",
     "transformers>=4.56.1",
