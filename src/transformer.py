@@ -135,8 +135,8 @@ class TransformerBlock(nn.Module):
             ff, aux_loss = self.ff(self.norm_2(x), return_aux_loss)
         else:
             ff = self.ff(self.norm_2(x))
-            if isinstance(self.ff, FFN):
-                ff = self.dropout(ff)
+
+        ff = self.dropout(ff)
 
         x = x + ff  # (Batch, seq_len, emb_dim)
 
