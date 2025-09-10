@@ -3,7 +3,7 @@ import mlx.nn as nn
 
 import numpy as np
 
-from typing import Union
+from typing import Union, Tuple
 
 from .mlx_extension import multinomial
 from .moe import MoE, FFN
@@ -110,7 +110,7 @@ class TransformerBlock(nn.Module):
         self.norm_1 = nn.LayerNorm(emb_dim)
         self.norm_2 = nn.LayerNorm(emb_dim)
 
-    def __call__(self, x: mx.array, attn_mask: mx.array | None = None) -> mx.array:
+    def __call__(self, x: mx.array, attn_mask: mx.array | None = None, return_aux_loss: bool = False) -> mx.array | Tuple[mx.array, mx.array]:
         """
         Transformer block
 
@@ -123,18 +123,27 @@ class TransformerBlock(nn.Module):
         -------
         array
             Output tensor of shape  (batch, seq_len, embed_dim)
+            Load balance loss of MoE if return_aux_loss is true (batch, seq_len, total_experts)
         """
 
         attention = self.attn_block(self.norm_1(x), attn_mask)
         x = x + attention
 
-        ff = self.ff(self.norm_2(x))
+        aux_loss = mx.array(0.0)
 
-        if isinstance(self.ff, FFN):
-            ff = self.dropout(ff)
-        x = x + ff
+        if isinstance(self.ff, MoE) and return_aux_loss:
+            ff, aux_loss = self.ff(self.norm_2(x), return_aux_loss)
+        else:
+            ff = self.ff(self.norm_2(x))
+            if isinstance(self.ff, FFN):
+                ff = self.dropout(ff)
 
-        return x  # (Batch, seq_len, emb_dim)
+        x = x + ff  # (Batch, seq_len, emb_dim)
+
+        if return_aux_loss:
+            return x, aux_loss
+
+        return x
 
 
 class DecoderTransformer(nn.Module):
@@ -244,7 +253,7 @@ class MoEDecoderTransformer(nn.Module):
 
         self.proj_ff = nn.Linear(emb_dim, vocab_dim, bias=False)
 
-    def __call__(self, x: mx.array) -> mx.array:
+    def __call__(self, x: mx.array, return_aux_loss: bool = False) -> mx.array | Tuple[mx.array, mx.array]:
         """
         MoE Decoder Transformer
 
@@ -270,12 +279,21 @@ class MoEDecoderTransformer(nn.Module):
 
         x = embedding + pos_embedding
 
+        total_aux_loss = mx.array(0.0)
+
         for transformer_block in self.transformer_blocks:
-            x = transformer_block(x, attn_mask)
+            if return_aux_loss:
+                x, aux_loss = transformer_block(x, attn_mask,return_aux_loss)
+                total_aux_loss = total_aux_loss + aux_loss
+            else:
+                x = transformer_block(x, attn_mask)
 
-        x = self.proj_ff(x)
+        x = self.proj_ff(x) # raw logits in the form (batch, seq_len, vocab_dim)
 
-        return x  # raw logits in the form (batch, seq_len, vocab_dim)
+        if return_aux_loss:
+            return x, total_aux_loss
+
+        return x
 
     def generate(
         self,

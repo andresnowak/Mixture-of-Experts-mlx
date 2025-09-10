@@ -4,6 +4,7 @@ training:
   epochs: 1
   batch_size: 128
   sequence_length: 256
+  expert_level_balance: 0.01
 
 # Data Configuration
 data:

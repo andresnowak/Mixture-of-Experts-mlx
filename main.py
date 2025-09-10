@@ -2,6 +2,7 @@ from typing import Iterator, Tuple, Union
 import argparse
 
 import mlx.core as mx
+from mlx.nn.losses import cross_entropy
 import mlx.optimizers as optim
 import mlx.nn as nn
 import numpy as np
@@ -84,10 +85,18 @@ def train(
     epochs: int,
     batch_size: int,
     seq_len: int,
+    expert_level_balance: float = 0.01,  # Weight for load balancing loss
 ):
     def loss_fn(model, x, y):
-        out = model(x)
-        return nn.losses.cross_entropy(out, y, reduction="mean")
+        if isinstance(model, MoEDecoderTransformer):
+            out, load_balance_loss = model(x, return_aux_loss=True)
+            cross_entropy_loss = nn.losses.cross_entropy(out, y, reduction="mean")
+            total_loss = cross_entropy_loss + expert_level_balance * load_balance_loss
+            return total_loss, (cross_entropy_loss, load_balance_loss, out)
+        else:
+            out = model(x)
+            cross_entropy_loss = nn.losses.cross_entropy(out, y, reduction="mean")
+            return cross_entropy_loss, (cross_entropy_loss, mx.array(0.0), out)
 
     # Get a function which gives the loss and gradient of the
     # loss with respect to the model's trainable parameters
@@ -111,21 +120,21 @@ def train(
                 x_batch = mx.expand_dims(x_batch, -1)
 
                 # Don't know how to get the model outputs and also the loss
-                loss, grads = loss_and_grad_fn(model, x_batch, y_batch)
+                (loss, (main_loss, aux_loss, out)), grads = loss_and_grad_fn(model, x_batch, y_batch)
 
                 optimizer.update(model, grads)
 
                 # Force a graph evaluation
                 mx.eval(model.parameters(), optimizer.state)
 
-                # accuracy = mx.softmax(out).argmax(axis=-1) == y_batch  # (batch_size, seq_len)
+                accuracy = mx.softmax(out).argmax(axis=-1) == y_batch  # (batch_size, seq_len)
 
                 total_loss += loss
-                # total_accuracies += accuracy.sum()
+                total_accuracies += accuracy.sum()
 
                 pbar.set_postfix(
                     loss=f"{loss}",
-                    # acc=f"{accuracy.mean()}",
+                    acc=f"{accuracy.mean()}",
                 )
 
         # Average over the entire dataset
@@ -194,8 +203,10 @@ if __name__ == "__main__":
 
     print(f"Save file checkpoint: {args.checkpoint}")
 
+    expert_level_balance = config["training"].get("exper_level_balance", 0.01)
+
     if args.train:
-        train(model, train_dataset, lr, epochs, batch_size, seq_len)
+        train(model, train_dataset, lr, epochs, batch_size, seq_len, expert_level_balance)
 
         model.save_weights(args.checkpoint)
     else:
