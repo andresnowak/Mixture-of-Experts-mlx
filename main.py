@@ -8,6 +8,7 @@ import numpy as np
 from tqdm import tqdm
 
 from src.transformer import DecoderTransformer
+from src.utils import load_config_basic
 
 
 class StoryDataset:
@@ -146,6 +147,9 @@ def parse_args() -> argparse.Namespace:
         "--checkpoint", type=str, default=None, help="Path to a saved .safetensors file or to save tensor file"
     )
     parser.add_argument(
+        "--config", type=str, default=None, help="Path to .yaml config"
+    )
+    parser.add_argument(
         "--train", action="store_true", help="If set will train"
     )
 
@@ -155,24 +159,26 @@ def parse_args() -> argparse.Namespace:
 if __name__ == "__main__":
     args = parse_args()
 
-    lr = 5e-4
-    epochs = 1
-    batch_size = 64
-    seq_len = 128
+    config = load_config_basic(args.config)
 
-    text = open("dataset/shakespeare.txt", "r").read()
+    lr = config['training']['learning_rate']
+    epochs = config['training']['epochs']
+    batch_size = config['training']['batch_size']
+    seq_len = config['training']['sequence_length']
+
+    text = open(config["data"]["source_file"], "r").read()
     train_dataset = StoryDataset(text, batch_size, seq_len)
 
     model = DecoderTransformer(
         max_len=seq_len,
         vocab_dim=train_dataset.vocab_size,
-        emb_dim=128,
-        num_heads=8,
-        layers=4,
-        ff_dim=128 * 4,
+        emb_dim=config['model']['architecture']["embedding_dimension"],
+        num_heads=config['model']['architecture']['attention_heads'],
+        layers=config['model']['architecture']['num_layers'],
+        ff_dim=config['model']['architecture']['feedforward_dimension'],
     )
 
-    print(args.checkpoint)
+    print(f"Save file checkpoint: {args.checkpoint}")
 
     if args.train:
         train(model, train_dataset, lr, epochs, batch_size, seq_len)
@@ -183,7 +189,7 @@ if __name__ == "__main__":
 
     generation = model.generate(
         mx.array([train_dataset.stoi[s] for s in "Would"]).reshape(1, -1),
-        128,
+        config['model']['architecture']['max_length'],
         do_sample=True,
         top_k=3,
     )
@@ -191,3 +197,5 @@ if __name__ == "__main__":
     print(
         "".join([train_dataset.itos[s.tolist()] for s in list(generation.reshape(-1))])
     )
+
+    print(f"Peak memory usage: {mx.get_peak_memory() / (1024 * 1024)} mb")
