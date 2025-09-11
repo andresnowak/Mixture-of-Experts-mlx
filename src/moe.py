@@ -36,8 +36,12 @@ class TopKRouter(nn.Module):
         array
             Output indices saying which experts we will compute with (batch, seq_len, top_k_routers + shared_experts)
         """
+        score_logits = x @ self.expert_embeddings
+
+        score_logits[..., :self.shared_experts] = -float("inf") # so shared experts don't affect the scores of the routed experts (they will go to 0)
+
         score_gate = mx.softmax(
-            x @ self.expert_embeddings, axis=-1
+            score_logits, axis=-1
         )  # u_t * e_i, (Batch, seq_len, total_experts)
 
         score_gate[..., :self.shared_experts] = 1.0
@@ -126,6 +130,10 @@ class MoE(nn.Module):
                 Experts affinites scores of form (batch, seq_len, total_experts)
         """
 
+        return self._naive_loop(x, return_load_balance_loss)
+
+
+    def _naive_loop(self, x: mx.array, return_load_balance_loss: bool = False) -> mx.array | Tuple[mx.array, mx.array]:
         batch, seq_len, emb_dim = x.shape
         num_tokens = batch * seq_len
 
@@ -153,3 +161,6 @@ class MoE(nn.Module):
             return routed_output, load_balance_loss
 
         return routed_output
+
+    def _parallel(self, x: mx.array, return_load_balance_loss: bool = False) -> mx.array | Tuple[mx.array, mx.array]:
+        pass
