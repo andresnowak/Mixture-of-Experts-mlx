@@ -18,7 +18,7 @@ class TopKRouter(nn.Module):
 
         self.top_k_routers = top_k_routers
 
-        self.expert_embeddings = mx.random.uniform(shape=(hidden_dim, self.total_experts))
+        self.expert_embeddings = nn.Linear(hidden_dim, self.total_experts, bias=False)
 
     def __call__(self, x: mx.array) -> Tuple[mx.array, mx.array]:
         """
@@ -36,7 +36,7 @@ class TopKRouter(nn.Module):
         array
             Output indices saying which experts we will compute with (batch, seq_len, top_k_routers + shared_experts)
         """
-        score_logits = x @ self.expert_embeddings
+        score_logits = self.expert_embeddings(x) # (batch, seq_len, total_experts)
 
         score_logits[..., :self.shared_experts] = -float("inf") # so shared experts don't affect the scores of the routed experts (they will go to 0)
 
@@ -76,8 +76,9 @@ class TopKRouter(nn.Module):
         experts_counts = mx.zeros(self.routed_experts)
 
         for e in range(self.shared_experts, self.total_experts):
+            e_idx = e - self.shared_experts
             mask = (expert_indices == e).any(axis=-1) # (batch, seq_len)
-            experts_counts[e] = mask.sum()
+            experts_counts[e_idx] = mask.sum()
 
         experts_counts = experts_counts * (self.routed_experts / (self.top_k_routers * num_tokens)) # f_i in the paper
 
@@ -143,14 +144,17 @@ class MoE(nn.Module):
 
         routed_output = mx.zeros((x.shape[0], x.shape[1], self.top_k_routers + self.shared_experts, x.shape[2]))
 
-        for e in range(self.top_k_routers + self.shared_experts):
-            expert_indices = tuple(map(mx.array, np.where(experts_indices == e)))[:-1] # we don't care about the dimension of experts
+        for e in range(self.total_experts):
+            expert_indices = tuple(map(mx.array, np.where(experts_indices == e)))
 
-            routed_input = mx.contiguous(x[*expert_indices].reshape(-1, emb_dim)) # gather
+            if expert_indices[0].size == 0:
+                continue
+
+            routed_input = mx.contiguous(x[*expert_indices[:-1]].reshape(-1, emb_dim)) # gather
 
             out_e = self.experts[e](routed_input) # (batch, seq_len_for_expert, embed_dim)
 
-            routed_output[:, :, e][*expert_indices] = out_e # scatter
+            routed_output[*expert_indices] = out_e # scatter
 
         routed_output = (routed_output * mx.expand_dims(selected_experts_affinity, axis=-1)).sum(axis=2)
 
