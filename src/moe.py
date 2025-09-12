@@ -5,6 +5,7 @@ import mlx.nn as nn
 import numpy as np
 
 from .aux_losses import compute_expert_load_balance_loss
+from .mlx_extension import one_hot
 
 
 class TopKRouter(nn.Module):
@@ -115,9 +116,9 @@ class MoE(nn.Module):
             Experts affinites scores of form (batch, seq_len, total_experts)
         """
 
-        return self._naive_loop(x, return_load_balance_loss)
+        return self.__naive(x, return_load_balance_loss)
 
-    def _naive_loop(
+    def __naive(
         self, x: mx.array, return_load_balance_loss: bool = False
     ) -> mx.array | Tuple[mx.array, mx.array]:
         batch, seq_len, emb_dim = x.shape
@@ -171,7 +172,97 @@ class MoE(nn.Module):
 
         return routed_output
 
-    def _parallel(
-        self, x: mx.array, return_load_balance_loss: bool = False
-    ) -> mx.array | Tuple[mx.array, mx.array]:
-        pass
+
+class ExpertChoiceMoE(nn.Module):
+    def __init__(
+        self,
+        hidden_dim: int,
+        ff_dim: int,
+        num_experts: int,
+        capacity_factor: int,
+        sequence_length: int,
+        batch_size: int,
+    ):
+        super().__init__()
+
+        self.num_experts = num_experts
+        self.top_k_tokens = (
+            batch_size * sequence_length * capacity_factor
+        ) // num_experts  # n * c / e
+
+        self.expert_embeddings = nn.Linear(hidden_dim, self.num_experts, bias=False)
+
+        self.experts = [FFN(hidden_dim, ff_dim) for _ in range(self.num_experts)]
+
+    def __call__(self, x: mx.array) -> mx.array:
+        """
+        Expert Choice MoE router
+
+        Parameters
+        ----------
+        x : array
+            Output form the Attention head (batch, seq_len, embed_dim).
+
+        Returns
+        -------
+        array
+            Output Tensor of form (batch, seq_len, embed_dim)
+        """
+        batch, seq_len, hidden_dim = x.shape
+
+        x_input = x.reshape(-1, hidden_dim)
+
+        logits = self.expert_embeddings(x_input)  # (N, E)
+        affinity_scores = mx.softmax(
+            logits, axis=-1
+        )  # (N, E). Why do the softmax over the expert dimension and no the scores?
+
+        chosen_tokens_indices = mx.stop_gradient(
+            mx.argpartition(
+                -affinity_scores.transpose(1, 0), kth=self.top_k_tokens, axis=-1
+            )
+        )[..., : self.top_k_tokens]  # (E, top_k_tokens)
+
+        return self.__naive(
+            x_input, chosen_tokens_indices, affinity_scores, batch * seq_len
+        ).reshape(batch, seq_len, hidden_dim)
+
+    def __naive(
+        self,
+        x: mx.array,
+        chosen_tokens_indices: mx.array,
+        affinity_scores: mx.array,
+        total_tokens: int,
+    ) -> mx.array:
+        x_out = mx.zeros_like(x)
+
+        for e in range(self.num_experts):
+            output = self.experts[e](x[chosen_tokens_indices[e]]) # (top_k_tokens, emb_dim)
+
+            x_out[chosen_tokens_indices[e]] += output * mx.expand_dims(affinity_scores[chosen_tokens_indices[e],e], axis=-1)
+
+        return x_out
+
+
+    def __parallel(
+        self,
+        x: mx.array,
+        chosen_tokens_indices: mx.array,
+        affinity_scores: mx.array,
+        total_tokens: int,
+    ) -> mx.array:
+        P = one_hot(chosen_tokens_indices, total_tokens)  # (E, top_k_tokens, N)
+
+        x_in = (
+            P @ x
+        )  # (E, top_k, N) @ (N, emb_dim) = (E, top_k, hidden_dim), one_hot matrix here is just a row chooser (so selecting the tokens it wants)
+
+        expert_outputs = mx.stack(
+            [self.experts[e](x_in[e]) for e in range(self.num_experts)]
+        )  # (E, top_k, hidden_dim)
+
+        # chosen_affinity_scores = affinity_score[chosen_tokens_indices.transpose(1, 0)]
+
+        x_out = mx.einsum("ijl,li,ijd->ld", P, affinity_scores, expert_outputs)
+
+        return x_out

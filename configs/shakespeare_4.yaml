@@ -20,8 +20,8 @@ model:
     attention_heads: 8
     num_layers: 4
     feedforward_dimension: 512  # 128 * 4
-    shared_experts: 1
+    shared_experts: 0
     routed_experts: 4
-    top_k_routers: 2
-    routing_type: "MoE"
-    capacity_factor: 0
+    top_k_routers: 0
+    routing_type: "ExpertChoiceMoE"
+    capacity_factor: 2

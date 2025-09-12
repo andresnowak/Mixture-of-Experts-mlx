@@ -4,6 +4,7 @@ import argparse
 import mlx.core as mx
 from mlx.nn.losses import cross_entropy
 import mlx.optimizers as optim
+from mlx.utils import tree_flatten
 import mlx.nn as nn
 import numpy as np
 from tqdm import tqdm
@@ -85,10 +86,11 @@ def train(
     epochs: int,
     batch_size: int,
     seq_len: int,
+    aux_loss: bool = False,
     expert_level_balance: float = 0.01,  # Weight for load balancing loss
 ):
     def loss_fn(model, x, y):
-        if isinstance(model, MoEDecoderTransformer):
+        if isinstance(model, MoEDecoderTransformer) and aux_loss:
             out, load_balance_loss = model(x, return_aux_loss=True)
             cross_entropy_loss = nn.losses.cross_entropy(out, y, reduction="mean")
             total_loss = cross_entropy_loss + expert_level_balance * load_balance_loss
@@ -197,16 +199,22 @@ if __name__ == "__main__":
             shared_experts=config["model"]["architecture"]["shared_experts"],
             routed_experts=config["model"]["architecture"]["routed_experts"],
             top_k_routers=config["model"]["architecture"]["top_k_routers"],
+            routing_type=config["model"]["architecture"]["routing_type"],
+            capacity_factor=config["model"]["architecture"]["capacity_factor"]
         )
     else:
         raise Exception("Incorrect Model type specified")
+
+    num_params = sum(v.size for _, v in tree_flatten(model.parameters()))
+    print(f"Number of parameters: {num_params}")
+    # print(f"Model: {model}")
 
     print(f"Save file checkpoint: {args.checkpoint}")
 
     expert_level_balance = config["training"].get("exper_level_balance", 0.01)
 
     if args.train:
-        train(model, train_dataset, lr, epochs, batch_size, seq_len, expert_level_balance)
+        train(model, train_dataset, lr, epochs, batch_size, seq_len, False, expert_level_balance)
 
         model.save_weights(args.checkpoint)
     else:
@@ -218,7 +226,6 @@ if __name__ == "__main__":
         do_sample=True,
         top_k=3,
     )
-    print(generation.shape)
     print(
         "".join([train_dataset.itos[s.tolist()] for s in list(generation.reshape(-1))])
     )

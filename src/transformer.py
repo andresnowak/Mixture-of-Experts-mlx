@@ -6,7 +6,7 @@ import numpy as np
 from typing import Union, Tuple
 
 from .mlx_extension import multinomial
-from .moe import MoE, FFN
+from .moe import ExpertChoiceMoE, MoE, FFN
 
 # https://arxiv.org/abs/1706.03762, but we use pre-norm and dropout
 
@@ -238,15 +238,25 @@ class MoEDecoderTransformer(nn.Module):
         routed_experts: int,
         top_k_routers: int,
         layers: int,
+        routing_type: str = "MoE",
+        capacity_factor: int = 0,
     ):
         super().__init__()
 
         self.embedding = nn.Embedding(vocab_dim, emb_dim)
         self.pos_embedding = nn.init.he_normal()(mx.zeros((max_len, emb_dim)))
 
+        moe_router = None
+        if routing_type == "MoE":
+            moe_router = MoE(emb_dim, ff_dim, shared_experts, routed_experts, top_k_routers)
+        elif routing_type == "ExpertChoiceMoE":
+            moe_router = ExpertChoiceMoE(emb_dim, ff_dim, routed_experts, capacity_factor, 128, max_len)
+        else:
+            raise Exception(f"Incorrect routing type {routing_type}")
+
         self.transformer_blocks = [
             TransformerBlock(
-                emb_dim, ff_dim, num_heads, MoE(emb_dim, ff_dim, shared_experts, routed_experts, top_k_routers), 0.5
+                emb_dim, ff_dim, num_heads, moe_router, 0.5
             )
             for i in range(layers)
         ]
