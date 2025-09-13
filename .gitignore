@@ -11,3 +11,6 @@ wheels/
 
 # Model files
 *.safetensors
+
+# Extra
+.DS_Store
