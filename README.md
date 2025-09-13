@@ -11,18 +11,15 @@ The two important contributions of DeepSeek-MoE are
 - Shared expert isolation
   - We isolate $K_s$ experts as shared ones (this experts are always active)
   - The idea here is that this models will capture general knowledge so as to reduce knowledge redundancy between the other experts (e.g. there is one expert that learns biology and another Laws, but in the end both have to learn about language, so instead we can have a shared expert that learns about language instead).
-  - In the end the implementation looks like this
-  - Formula:
-  	- $$h_t^l = \sum_{i=1}^{K_s} \mathrm{FFN}_i\!\left(u_t^l\right) + \sum_{i=K_s+1}^{mN} g_{i,t}\,\mathrm{FFN}_i\!\left(u_t^l\right) + u_t^l$$
+  - In the end the implementation looks like this:
+  	- $h_t^l = \sum_{i=1}^{K_s} \mathrm{FFN}_i\!\left(u_t^l\right) + \sum_{i=K_s+1}^{mN} g_{i,t}\,\mathrm{FFN}_i\!\left(u_t^l\right) + u_t^l$
     - $$ g_{i,t} =
       \begin{cases}
       s_{i,t}, & s_{i,t} \in \mathrm{Topk}\!\left(\{\, s_{j,t} \mid K_s + 1 \le j \le mN \,\},\, mK - K_s\right) \\
       0, & \text{otherwise}
       \end{cases}
       $$
-    - $$
-      s_{i,t} = \mathrm{Softmax}_i\!\left( (u_t^l)^\top e_i^l \right)
-      $$
+    - $s_{i,t} = \mathrm{Softmax}_i\!\left( (u_t^l)^\top e_i^l \right)$
     - Where:
       - $e^l_i$ ($i$ is the expert and $l$ is the layer) is the learned weight embeddings of the experts where $e \in R^{\text{hidden dim } \cdot \text{ number of experts}}$
       - $u$ is the result of the final projection of the Attention layer, where $u \in R^{\text{batch size} \cdot \text{seq len} \cdot \text{hidden dim}}$
@@ -49,32 +46,30 @@ For this we use:
 
 - **Load balancing loss (from *Switch transformer*)**
   - loss = $\alpha \cdot N \cdot \sum_{i=1}^{N} f_i \cdot P_i$ (4)
-    - where $f_i$ is the fraction of tokens dispatched to expert $i$, $$f_i = \frac{1}{T} \sum_{x \in B} \mathbb{1}\bigl\{\mathop{\mathrm{argmax}} p(x) = i\bigr\}$$ (5)
+    - where $f_i$ is the fraction of tokens dispatched to expert $i$, $$f_i = \frac{1}{T} \sum_{x \in B} \mathbb{1} \{\mathop{\mathrm{argmax}} p(x) = i \}$$ (5)
     - and $P_i$ is the average of the router probability allocated for expert $i$ over all the tokens, $$P_i = \frac{1}{T} \sum_{x \in B} p_i(x)$$
     - Here again if the router keeps favoring the same experts, they will get $f_i \approx 1$ and the sum of $P_i$ will approximate 1 only for the chosen experts and the others it will go to 0. And in the end the loss will be $\alpha \cdot N$ 
       - And if instead it is uniformly across all experts we will have $f_i = 1/N$ and $P_i = 1/N$ so in the end we have $\alpha \cdot N \cdot N \cdot 1/N^2 = \alpha$ 
 - **Noisy Top-K load estimator and load-balance loss (from *Outrageously Large Neural Networks: The Sparsely-Gated Mixture-of-Experts Layer*)** ((This implementation is still difficult for me to understand))
   - $$
   P(x, i)
-  = \Pr\Bigl((x \cdot W_g)_i \;+\; \mathcal{N}(0,1)\,\times\,\mathrm{Softplus}\bigl((x \cdot W_{\mathrm{noise}})_i\bigr)
-     \;>\;
-     \mathrm{kth\_excluding}\bigl(H(x),\,k,\,i\bigr)\Bigr)$$
+  = \Pr\Bigl((x \cdot W_g)_i + \mathcal{N}(0,1)\,\times\,\mathrm{Softplus}\bigl((x \cdot W_{\mathrm{noise}})_i\bigr) > \mathrm{kth\_excluding}\bigl(H(x),\,k,\,i\bigr)\Bigr)$$
   - where `kth_excluding(v, k, i)` returns the $k$-th largest entry of $v$ *excluding* the $i$-th. (So basically here they are doing a z-score to then grab from the the table of the Normal gaussian CDF?)
   - $$ P(x, i = \Phi\!\Bigl(
-    \frac{(x \cdot W_g)_i \;-\; \mathrm{kth\_excluding}(H(x),k,i)}
+    \frac{(x \cdot W_g)_i - \mathrm{kth\_excluding}(H(x),k,i)}
          {\mathrm{Softplus}\bigl((x \cdot W_{\mathrm{noise}})_i\bigr)}
   \Bigr)$$ with $\Phi$ being the CDF of the standard normal.
 
-  - $$\mathrm{Load}(X)_i \;=\; \sum_{x \in X} P(x, i)$$
-  - $$\mathcal{L}_{\mathrm{load}}(X) = w_{\mathrm{load}}\;\bigl(\mathrm{CV}\bigl(\mathrm{Load}(X)\bigr)\bigr)^2$$
+  - $$\mathrm{Load}(X)_i = \sum_{x \in X} P(x, i)$$
+  - $$\mathcal{L}_{\mathrm{load}}(X) = w_{\mathrm{load}}\bigl(\mathrm{CV}\bigl(\mathrm{Load}(X)\bigr)\bigr)^2$$
 
     - Here **CV** is the *coefficient of variation* of the load vector $v$ (This part of **CV** I don't understand it)
   - But basically models use instead the other load balance losses and remove the Noise from the routing as it seems it was a very difficult to tune the **CV** and in the end it seems more simple regularizers or hard capacity factors give better results 
 
 ### Router types
 - **The common top-k experts for each token (from *Outrageously Large Neural Networks: The Sparsely-Gated Mixture-of-Experts Layer*)** (*This implementation is still difficult for me to understand*)
-  - $$G(x) \;=\;\mathrm{Softmax}\,\bigl(\mathrm{KeepTopK}\bigl(H(x),\,k\bigr)\bigr)$$
-  - $$H(x)_i \;=\;(x\,W_g)_i \;+\;\mathcal{N}(0,1)\;\times\;\mathrm{Softplus}\bigl((x\,W_{\text{noise}})_i\bigr)$$
+  - $$G(x) =\mathrm{Softmax}\,\bigl(\mathrm{KeepTopK}\bigl(H(x),\,k\bigr)\bigr)$$
+  - $$H(x)_i =(x\,W_g)_i + \mathcal{N}(0,1) \times \mathrm{Softplus}\bigl((x\,W_{\text{noise}})_i\bigr)$$
   - $$\mathrm{KeepTopK}(v,k)_i =
     \begin{cases}
     v_i,&\text{if }v_i\text{ is among the top-}k\text{ entries of }v,\\
@@ -88,8 +83,8 @@ For this we use:
       - And from this we can basically do another type of Load balance
     - But in the end instead the the noise factor has stop being used because it seems it was more costly and difficult to tune the **CV** factor, 
       - **And instead we use the Switch balance loss or other regularizers, and with this it is not necessary to use the Noise to do the balancing loss**
-        - $$G(x) \;=\;\mathrm{Softmax}\,\bigl(\mathrm{KeepTopK}\bigl(H(x),\,k\bigr)\bigr)$$
-        - $$H(x)_i \;=\;(x\,W_g)_i$$
+        - $$G(x)  = \mathrm{Softmax}\,\bigl(\mathrm{KeepTopK}\bigl(H(x),\,k\bigr)\bigr)$$
+        - $$H(x)_i  = (x\,W_g)_i$$
         - $$\mathrm{KeepTopK}(v,k)_i =
           \begin{cases}
           v_i,&\text{if }v_i\text{ is among the top-}k\text{ entries of }v,\\
@@ -114,26 +109,26 @@ For this we use:
 		
 		The gating function is:
 		$$
-		S \;=\; \mathrm{Softmax}(X W_g), \qquad S \in \mathbb{R}^{n \times e},\; W_g \in \mathbb{R}^{d \times e}
+		S = \mathrm{Softmax}(X W_g), \qquad S \in \mathbb{R}^{n \times e}, W_g \in \mathbb{R}^{d \times e}
 		$$
 		
 		$$
-		G,\, I \;=\; \mathrm{TopK}(S^\top,\, k), \qquad P \;=\; \mathrm{OneHot}(I)
+		G,\, I = \mathrm{TopK}(S^\top,\, k), \qquad P = \mathrm{OneHot}(I)
 		$$
 		
 		Inputs to each expert’s FFN are gathered by $P$:
 		$$
-		X_{\mathrm{in}} \;=\; P \cdot X, \qquad X_{\mathrm{in}} \in \mathbb{R}^{e \times k \times d}
+		X_{\mathrm{in}} = P \cdot X, \qquad X_{\mathrm{in}} \in \mathbb{R}^{e \times k \times d}
 		$$
 		
 		Per-expert FFN (biases omitted), with $W_1[i], W_2[i] \in \mathbb{R}^{d \times d'}$:
 		$$
-		\forall i:\quad X_e[i] \;=\; \mathrm{GeLU}\!\big(X_{\mathrm{in}}[i]\, W_1[i]\big)\, W_2[i]^\top
+		\forall i:\quad X_e[i] = \mathrm{GeLU}\!\big(X_{\mathrm{in}}[i]\, W_1[i]\big)\, W_2[i]^\top
 		$$
 		
 		Final MoE layer output (combining permutation $P$ and gates $G$):
     $$
-    X_{\mathrm{out}}[l, d] \;=\; \sum_{i=1}^{e} \sum_{j=1}^{k} P[i, j, l] \, G[i, j] \, X_e[i, j, d],
+    X_{\mathrm{out}}[l, d] = \sum_{i=1}^{e} \sum_{j=1}^{k} P[i, j, l] \, G[i, j] \, X_e[i, j, d],
     \qquad X_{\mathrm{out}} \in \mathbb{R}^{n \times d}.
     $$
   - They set the number of tokens each expert can have as $top\_k = \frac{n \cdot c}{e}$
