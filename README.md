@@ -24,8 +24,8 @@ The two important contributions of DeepSeek-MoE are
       s_{i,t} = \mathrm{Softmax}_i\!\left( (u_t^l)^\top e_i^l \right)
       $$
     - Where:
-      - $e^l_i$ ($i$ is the expert and $l$ is the layer) is the learned weight embeddings of the experts where $e \in R^{\text{hidden\_dim } \cdot \text{ number of experts}}$
-      - $u$ is the result of the final projection of the Attention layer, where $u \in R^{\text{batch\_size} \cdot \text{seq\_len} \cdot \text{hidden\_dim}}$
+      - $e^l_i$ ($i$ is the expert and $l$ is the layer) is the learned weight embeddings of the experts where $e \in R^{\text{hidden dim } \cdot \text{ number of experts}}$
+      - $u$ is the result of the final projection of the Attention layer, where $u \in R^{\text{batch size} \cdot \text{seq len} \cdot \text{hidden dim}}$
       - $s$ are basically what we call the affinities that each token has to an expert, based on this we choose the experts that have the biggest affinity to a specific token and always our shared expert
       - $s$ are the end result affinities where the experts that where not chosen get a $g = 0$, so in the end they don't contribute anything to $h$, adn this is why MoE are sparse
 
@@ -42,7 +42,7 @@ For this we use:
   - $f_i = \frac{\hat{N}}{\hat{K}T} \sum^T_{t=1} \mathrm{1}(\text{Token t selects expert i})$
   - $P_i = \frac{1}{T} \sum^T_{t=1} s_{i,t}$ 
   - Where: 
-    - $\alpha_1$ is a hyperparameter called "expert-level balance factor", $\hat{N}$ is equal to ($mN - K_s$) and $\hat{K} = (mK-K_s)$ (so basically the experts that are not shared experts), $\mathrm{1}(\cdot)$ is the indicator function (where 1 if true and 0 if not) and T is the total number of tokens so $\text{batch\_size} \cdot \text{sequence\_length}$ (we basically balance across the whole batch)
+    - $\alpha_1$ is a hyperparameter called "expert-level balance factor", $\hat{N}$ is equal to ($mN - K_s$) and $\hat{K} = (mK-K_s)$ (so basically the experts that are not shared experts), $\mathrm{1}(\cdot)$ is the indicator function (where 1 if true and 0 if not) and T is the total number of tokens so $\text{batch size} \cdot \text{sequence length}$ (we basically balance across the whole batch)
   - This loss forces the way the experts are chosen to be uniform. Because, if it decides to always choose the same experts for every token ($s_{i,t}$ always small for everyone else), it's value will get bigger (because from the load balance loss we can see how our average $s_i$ (that is $P_i$) over all the tokens will get multiplied by $f_i = \hat{N}/\hat{K}$ (because the sum of selected tokens will be equal to $T$)), so it is better to balance the values because like this $f_i$ and $P_i$ values will be smaller.
   - And here there is no problem for auto-regression as this auxiliary loss is only used during the training (so using total tokens in the whole batch for this there is no problem).
     - The thing is as in the *OpenMoE* paper showed, this routing function is learned during the pre-training but at fine-tuning the distribution of tokens can be Out-of-distribution (That it is a very different type of corpus to learn in how it is structured), and here the routing rule in the end can collapse a little where now some experts will receive a bigger amount of tokens than others (now we don't have a good load balance)
