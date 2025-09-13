@@ -5,6 +5,7 @@ training:
   batch_size: 128
   sequence_length: 256
   expert_level_balance: 0.01
+  use_aux_loss: true
 
 # Data Configuration
 data:
@@ -21,7 +22,6 @@ model:
     num_layers: 4
     feedforward_dimension: 512  # 128 * 4
     shared_experts: 1
-    routed_experts: 4
+    num_experts: 5 # routed = shared_experts - num_experts
     top_k_routers: 2
     routing_type: "MoE"
-    capacity_factor: 0

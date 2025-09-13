@@ -4,7 +4,7 @@ training:
   epochs: 1
   batch_size: 128
   sequence_length: 256
-  expert_level_balance: 0.01
+  use_aux_loss: false
 
 # Data Configuration
 data:
@@ -21,7 +21,7 @@ model:
     num_layers: 4
     feedforward_dimension: 512  # 128 * 4
     shared_experts: 0
-    routed_experts: 4
+    num_experts: 4
     top_k_routers: 0
     routing_type: "ExpertChoiceMoE"
     capacity_factor: 2

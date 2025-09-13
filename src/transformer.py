@@ -3,7 +3,7 @@ import mlx.nn as nn
 
 import numpy as np
 
-from typing import Union, Tuple
+from typing import Union, Tuple, Dict, Any
 
 from .mlx_extension import multinomial
 from .moe import ExpertChoiceMoE, MoE, FFN
@@ -94,9 +94,8 @@ class TransformerBlock(nn.Module):
     def __init__(
         self,
         emb_dim: int,
-        ff_dim: int,
         num_heads: int,
-        ff_function: Union[FFN, MoE],
+        ff_function: Union[FFN, MoE, ExpertChoiceMoE],
         prob: float = 0.5,
     ):
         # ff_dim commonly is 4 times the size of emb_dim
@@ -110,7 +109,12 @@ class TransformerBlock(nn.Module):
         self.norm_1 = nn.LayerNorm(emb_dim)
         self.norm_2 = nn.LayerNorm(emb_dim)
 
-    def __call__(self, x: mx.array, attn_mask: mx.array | None = None, return_aux_loss: bool = False) -> mx.array | Tuple[mx.array, mx.array]:
+    def __call__(
+        self,
+        x: mx.array,
+        attn_mask: mx.array | None = None,
+        return_aux_loss: bool = False,
+    ) -> mx.array | Tuple[mx.array, mx.array]:
         """
         Transformer block
 
@@ -149,121 +153,64 @@ class TransformerBlock(nn.Module):
 class DecoderTransformer(nn.Module):
     def __init__(
         self,
-        max_len: int,
-        vocab_dim: int,
-        emb_dim: int,
-        num_heads: int,
-        layers: int,
-        ff_dim: int,
+        **config,
     ):
         super().__init__()
 
+        ff_function_type: str = config["ff_function"]
+        batch_size: int = config["batch_size"]
+        vocab_dim: int = config["vocab_dim"]
+        emb_dim: int = config["emb_dim"]
+        routing_type: str | None = config.get("routing_type", None)
+        max_len: int = config["max_len"]
+        ff_dim: int = config["ff_dim"]
+        num_experts: int = config.get("num_experts", 0)
+        shared_experts: int = config.get("shared_experts", 0)
+        top_k_routers: int = config.get("top_k_routers", 0)
+        capacity_factor: int = config.get("capacity_factor", 0)
+        layers: int = config["layers"]
+        num_heads: int = config["num_heads"]
+
+        routed_experts = num_experts - shared_experts
+
         self.embedding = nn.Embedding(vocab_dim, emb_dim)
-        self.pos_embedding = nn.init.he_normal()(mx.zeros((max_len, emb_dim)))
+        self.pos_embedding = mx.random.normal((max_len, emb_dim))
+
+        def make_ff_function() -> Union[FFN, MoE, ExpertChoiceMoE]:
+            ff_function: Union[None, FFN, MoE, ExpertChoiceMoE] = None
+            if ff_function_type == "MoEDecoderTransformer":
+                if routing_type == "MoE":
+                    ff_function = MoE(
+                        emb_dim, ff_dim, shared_experts, routed_experts, top_k_routers
+                    )
+                elif routing_type == "ExpertChoiceMoE":
+                    ff_function = ExpertChoiceMoE(
+                        emb_dim,
+                        ff_dim,
+                        routed_experts,
+                        capacity_factor,
+                        batch_size,
+                        max_len,
+                    )
+                else:
+                    raise ValueError(f"Incorrect routing type {routing_type}")
+            elif ff_function_type == "DecoderTransformer":
+                ff_function = FFN(emb_dim, ff_dim)
+            else:
+                raise ValueError(f"Incorrect FFN function type {ff_function}")
+
+            return ff_function
 
         self.transformer_blocks = [
-            TransformerBlock(emb_dim, ff_dim, num_heads, FFN(emb_dim, ff_dim), 0.5)
-            for i in range(layers)
+            TransformerBlock(emb_dim, num_heads, make_ff_function(), 0.5)
+            for _ in range(layers)
         ]
 
         self.proj_ff = nn.Linear(emb_dim, vocab_dim, bias=False)
 
-    def __call__(self, x: mx.array) -> mx.array:
-        """
-        Decoder Transformer
-
-        Parameters
-        ----------
-        x : array
-            Input sequence of shape (batch, seq_len, 1).
-
-        Returns
-        -------
-        array
-            The raw logits output tensor of shape (batch, seq_len, vocab_dim).
-        """
-
-        assert len(x.shape) == 3
-
-        _, seq_len, _ = x.shape
-
-        attn_mask = mx.tril(mx.ones((seq_len, seq_len)), k=0)
-
-        embedding = self.embedding(x.squeeze(axis=-1))
-        pos_embedding = self.pos_embedding[:seq_len, :]
-
-        x = embedding + pos_embedding
-
-        for transformer_block in self.transformer_blocks:
-            x = transformer_block(x, attn_mask)
-
-        x = self.proj_ff(x)
-
-        return x  # raw logits in the form (batch, seq_len, vocab_dim)
-
-    def generate(
-        self,
-        sequence: mx.array,
-        max_new_tokens: int,
-        temperature: float = 1.0,
-        do_sample: bool = False,
-        top_k: int | None = None,
-    ):
-        """
-        Decoder Transformer
-
-        Parameters
-        ----------
-        sequence : array
-            Input sequence of shape (batch=1, seq_len).
-
-        Returns
-        -------
-        array
-            The raw logits output tensor of shape (batch=1, seq_len).
-        """
-
-        return generate(self, sequence, max_new_tokens, temperature, do_sample, top_k)
-
-
-class MoEDecoderTransformer(nn.Module):
-    def __init__(
-        self,
-        max_len: int,
-        vocab_dim: int,
-        emb_dim: int,
-        num_heads: int,
-        ff_dim: int,
-        shared_experts: int,
-        routed_experts: int,
-        top_k_routers: int,
-        layers: int,
-        routing_type: str = "MoE",
-        capacity_factor: int = 0,
-    ):
-        super().__init__()
-
-        self.embedding = nn.Embedding(vocab_dim, emb_dim)
-        self.pos_embedding = nn.init.he_normal()(mx.zeros((max_len, emb_dim)))
-
-        moe_router = None
-        if routing_type == "MoE":
-            moe_router = MoE(emb_dim, ff_dim, shared_experts, routed_experts, top_k_routers)
-        elif routing_type == "ExpertChoiceMoE":
-            moe_router = ExpertChoiceMoE(emb_dim, ff_dim, routed_experts, capacity_factor, 128, max_len)
-        else:
-            raise Exception(f"Incorrect routing type {routing_type}")
-
-        self.transformer_blocks = [
-            TransformerBlock(
-                emb_dim, ff_dim, num_heads, moe_router, 0.5
-            )
-            for i in range(layers)
-        ]
-
-        self.proj_ff = nn.Linear(emb_dim, vocab_dim, bias=False)
-
-    def __call__(self, x: mx.array, return_aux_loss: bool = False) -> mx.array | Tuple[mx.array, mx.array]:
+    def __call__(
+        self, x: mx.array, return_aux_loss: bool = False
+    ) -> mx.array | Tuple[mx.array, mx.array]:
         """
         MoE Decoder Transformer
 
@@ -293,12 +240,12 @@ class MoEDecoderTransformer(nn.Module):
 
         for transformer_block in self.transformer_blocks:
             if return_aux_loss:
-                x, aux_loss = transformer_block(x, attn_mask,return_aux_loss)
+                x, aux_loss = transformer_block(x, attn_mask, return_aux_loss)
                 total_aux_loss = total_aux_loss + aux_loss
             else:
                 x = transformer_block(x, attn_mask)
 
-        x = self.proj_ff(x) # raw logits in the form (batch, seq_len, vocab_dim)
+        x = self.proj_ff(x)  # raw logits in the form (batch, seq_len, vocab_dim)
 
         if return_aux_loss:
             return x, total_aux_loss

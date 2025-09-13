@@ -189,6 +189,7 @@ class ExpertChoiceMoE(nn.Module):
         self.top_k_tokens = (
             batch_size * sequence_length * capacity_factor
         ) // num_experts  # n * c / e
+        self.capacity_factor = capacity_factor
 
         self.expert_embeddings = nn.Linear(hidden_dim, self.num_experts, bias=False)
 
@@ -210,6 +211,10 @@ class ExpertChoiceMoE(nn.Module):
         """
         batch, seq_len, hidden_dim = x.shape
 
+        top_k_tokens = (
+            batch * seq_len * self.capacity_factor
+        ) // self.num_experts  # So as to be able to generate in autogregressive mode
+
         x_input = x.reshape(-1, hidden_dim)
 
         logits = self.expert_embeddings(x_input)  # (N, E)
@@ -218,10 +223,8 @@ class ExpertChoiceMoE(nn.Module):
         )  # (N, E). Why do the softmax over the expert dimension and no the scores?
 
         chosen_tokens_indices = mx.stop_gradient(
-            mx.argpartition(
-                -affinity_scores.transpose(1, 0), kth=self.top_k_tokens, axis=-1
-            )
-        )[..., : self.top_k_tokens]  # (E, top_k_tokens)
+            mx.argpartition(-affinity_scores.transpose(1, 0), kth=top_k_tokens, axis=-1)
+        )[..., :top_k_tokens]  # (E, top_k_tokens)
 
         return self.__naive(
             x_input, chosen_tokens_indices, affinity_scores, batch * seq_len
@@ -237,12 +240,15 @@ class ExpertChoiceMoE(nn.Module):
         x_out = mx.zeros_like(x)
 
         for e in range(self.num_experts):
-            output = self.experts[e](x[chosen_tokens_indices[e]]) # (top_k_tokens, emb_dim)
+            output = self.experts[e](
+                x[chosen_tokens_indices[e]]
+            )  # (top_k_tokens, emb_dim)
 
-            x_out[chosen_tokens_indices[e]] += output * mx.expand_dims(affinity_scores[chosen_tokens_indices[e],e], axis=-1)
+            x_out[chosen_tokens_indices[e]] += output * mx.expand_dims(
+                affinity_scores[chosen_tokens_indices[e], e], axis=-1
+            )
 
         return x_out
-
 
     def __parallel(
         self,

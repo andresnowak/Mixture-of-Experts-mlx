@@ -9,7 +9,7 @@ import mlx.nn as nn
 import numpy as np
 from tqdm import tqdm
 
-from src.transformer import DecoderTransformer, MoEDecoderTransformer
+from src.transformer import DecoderTransformer
 from src.utils import load_config_basic
 
 
@@ -86,12 +86,12 @@ def train(
     epochs: int,
     batch_size: int,
     seq_len: int,
-    aux_loss: bool = False,
+    use_aux_loss: bool = False,
     expert_level_balance: float = 0.01,  # Weight for load balancing loss
 ):
-    def loss_fn(model, x, y):
-        if isinstance(model, MoEDecoderTransformer) and aux_loss:
-            out, load_balance_loss = model(x, return_aux_loss=True)
+    def loss_fn(model, x, y, use_aux_loss: bool = False):
+        if use_aux_loss:
+            out, load_balance_loss = model(x, return_aux_loss=use_aux_loss)
             cross_entropy_loss = nn.losses.cross_entropy(out, y, reduction="mean")
             total_loss = cross_entropy_loss + expert_level_balance * load_balance_loss
             return total_loss, (cross_entropy_loss, load_balance_loss, out)
@@ -122,7 +122,7 @@ def train(
                 x_batch = mx.expand_dims(x_batch, -1)
 
                 # Don't know how to get the model outputs and also the loss
-                (loss, (main_loss, aux_loss, out)), grads = loss_and_grad_fn(model, x_batch, y_batch)
+                (loss, (main_loss, aux_loss, out)), grads = loss_and_grad_fn(model, x_batch, y_batch, use_aux_loss)
 
                 optimizer.update(model, grads)
 
@@ -175,35 +175,27 @@ if __name__ == "__main__":
     epochs = config["training"]["epochs"]
     batch_size = config["training"]["batch_size"]
     seq_len = config["training"]["sequence_length"]
+    expert_level_balance = config["training"].get("expert_level_balance", 0.01)
+    use_aux_loss = config["training"].get("use_aux_loss", False)
 
     text = open(config["data"]["source_file"], "r").read()
     train_dataset = StoryDataset(text, batch_size, seq_len)
 
-    if config["model"]["type"] == "DecoderTransformer":
-        model = DecoderTransformer(
-            max_len=seq_len,
-            vocab_dim=train_dataset.vocab_size,
-            emb_dim=config["model"]["architecture"]["embedding_dimension"],
-            num_heads=config["model"]["architecture"]["attention_heads"],
-            layers=config["model"]["architecture"]["num_layers"],
-            ff_dim=config["model"]["architecture"]["feedforward_dimension"],
-        )
-    elif config["model"]["type"] == "MoEDecoderTransformer":
-        model = MoEDecoderTransformer(
-            max_len=seq_len,
-            vocab_dim=train_dataset.vocab_size,
-            emb_dim=config["model"]["architecture"]["embedding_dimension"],
-            num_heads=config["model"]["architecture"]["attention_heads"],
-            layers=config["model"]["architecture"]["num_layers"],
-            ff_dim=config["model"]["architecture"]["feedforward_dimension"],
-            shared_experts=config["model"]["architecture"]["shared_experts"],
-            routed_experts=config["model"]["architecture"]["routed_experts"],
-            top_k_routers=config["model"]["architecture"]["top_k_routers"],
-            routing_type=config["model"]["architecture"]["routing_type"],
-            capacity_factor=config["model"]["architecture"]["capacity_factor"]
-        )
-    else:
-        raise Exception("Incorrect Model type specified")
+    model = DecoderTransformer(
+        ff_function=config["model"]["type"],
+        batch_size=batch_size,
+        max_len=seq_len,
+        vocab_dim=train_dataset.vocab_size,
+        emb_dim=config["model"]["architecture"]["embedding_dimension"],
+        num_heads=config["model"]["architecture"]["attention_heads"],
+        layers=config["model"]["architecture"]["num_layers"],
+        ff_dim=config["model"]["architecture"]["feedforward_dimension"],
+        shared_experts=config["model"]["architecture"].get("shared_experts", 0),
+        num_experts=config["model"]["architecture"].get("num_experts", 0),
+        top_k_routers=config["model"]["architecture"].get("top_k_routers", 0),
+        routing_type=config["model"]["architecture"].get("routing_type", 0),
+        capacity_factor=config["model"]["architecture"].get("capacity_factor", 0),
+    )
 
     num_params = sum(v.size for _, v in tree_flatten(model.parameters()))
     print(f"Number of parameters: {num_params}")
@@ -211,10 +203,8 @@ if __name__ == "__main__":
 
     print(f"Save file checkpoint: {args.checkpoint}")
 
-    expert_level_balance = config["training"].get("exper_level_balance", 0.01)
-
     if args.train:
-        train(model, train_dataset, lr, epochs, batch_size, seq_len, False, expert_level_balance)
+        train(model, train_dataset, lr, epochs, batch_size, seq_len, use_aux_loss, expert_level_balance)
 
         model.save_weights(args.checkpoint)
     else:
