@@ -53,7 +53,7 @@ For this we use:
     - and $P_i$ is the average of the router probability allocated for expert $i$ over all the tokens, $$P_i = \frac{1}{T} \sum_{x \in B} p_i(x)$$
     - Here again if the router keeps favoring the same experts, they will get $f_i \approx 1$ and the sum of $P_i$ will approximate 1 only for the chosen experts and the others it will go to 0. And in the end the loss will be $\alpha \cdot N$ 
       - And if instead it is uniformly across all experts we will have $f_i = 1/N$ and $P_i = 1/N$ so in the end we have $\alpha \cdot N \cdot N \cdot 1/N^2 = \alpha$ 
-- **Noisy Top-K load estimator and load-balance loss (from *Outrageously Large Neural Networks: The Sparsely-Gated Mixture-of-Experts Layer*)**
+- **Noisy Top-K load estimator and load-balance loss (from *Outrageously Large Neural Networks: The Sparsely-Gated Mixture-of-Experts Layer*)** ((This implementation is still difficult for me to understand))
   - $$
   P(x, i)
   = \Pr\Bigl((x \cdot W_g)_i \;+\; \mathcal{N}(0,1)\,\times\,\mathrm{Softplus}\bigl((x \cdot W_{\mathrm{noise}})_i\bigr)
@@ -138,7 +138,7 @@ For this we use:
     $$
   - They set the number of tokens each expert can have as $top\_k = \frac{n \cdot c}{e}$
   	- Where $n$ is the total number of tokens in the input batch (batch_size x sequence length), $c$ is the capacity factor (it denotes on average how many experts are utilized by a token), and $e$ is the number of experts
-  	- **But because of this capacity factor, it is possible for some tokens to be dropped, and that's why it seems with this version it helps to have the MoE instead on all layers to only have it for example in every other layer**
+  	- **But because of this capacity factor, it is possible for some tokens to be dropped, and that's why it seems with this version it helps to have the MoE instead on all layers to only have it for example in every other layer** (or at least thats their theory)
     	- And even this problem can happen in the other routing versions because sometimes capacity factors are also used and in the implementation of **OpenMoE** they showed that in pretraining it work correctly but then going to finetuning (because it is a little bit out-of-distribution) the amount of tokens drop would get high. And their idea to fix this was to use part of the finetuning data in the pretraining (Not for alignment but to help with load balancing)
 	- **Limitations**
   	- Lastly this implementation has the problem that it might not work in auto-regressive generation, because the method takes into account past and future tokens to do the top-k selection
