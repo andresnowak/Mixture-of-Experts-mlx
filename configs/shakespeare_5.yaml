@@ -1,0 +1,29 @@
+
+# Training Configuration
+training:
+  learning_rate: 0.0005
+  epochs: 1
+  batch_size: 128
+  sequence_length: 256
+  expert_level_balance: 0.01
+  use_aux_loss: true
+
+# Data Configuration
+data:
+  source_file: "dataset/shakespeare.txt"
+
+# Model Configuration
+model:
+  type: "MoEDecoderTransformer"
+  architecture:
+    max_length: 256  # Same as sequence_length
+    vocabulary_dimension: null  # Will be set from dataset.vocab_size
+    embedding_dimension: 128
+    attention_heads: 8
+    num_layers: 4
+    feedforward_dimension: 128
+    shared_experts: 1
+    num_experts: 8
+    top_k_routers: 3
+    routing_type: "MoE"
+    capacity_factor: 0
