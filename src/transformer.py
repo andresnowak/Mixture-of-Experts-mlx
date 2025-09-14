@@ -8,87 +8,9 @@ from typing import Union, Tuple, Dict, Any
 from .mlx_extension import multinomial
 from .moe import ExpertChoiceMoE, MoE, FFN
 from .positional_embeddings import sinusoidal_embeddings, absolute_embeddings
+from .attention import MultiHeadAttention, GatedAttention
 
 # https://arxiv.org/abs/1706.03762, but we use pre-norm and dropout
-
-
-class MultiHeadAttention(nn.Module):
-    # Multi-head attention
-    def __init__(self, emb_dim: int, num_heads: int, bias=True):
-        # Dimension of model (emb_dim) is equal to num_heads * d_k, d_k = emb_dim / num_heads
-        # emb_dim has to be divisble by num_heads
-
-        # Q and K use the same d_k and we also say that d_v = d_k
-
-        super().__init__()
-
-        self.num_heads = num_heads
-        self.emb_dim = emb_dim
-        d_k = emb_dim // num_heads
-        self.scaling: float = 1 / np.sqrt(d_k)
-
-        self.W_q = nn.Linear(emb_dim, emb_dim, bias=bias)
-        self.W_k = nn.Linear(emb_dim, emb_dim, bias=bias)
-        self.W_v = nn.Linear(emb_dim, emb_dim, bias=bias)
-        self.W_o = nn.Linear(emb_dim, emb_dim, bias=bias)
-
-    def _split_heads(self, z: mx.array):
-        batch, seq_len, _ = z.shape
-
-        return z.reshape(
-            batch, seq_len, self.num_heads, self.emb_dim // self.num_heads
-        ).transpose(0, 2, 1, 3)  # (B, num_heads, seq_len, d_k)
-
-    def __call__(self, x: mx.array, attn_mask: mx.array | None = None) -> mx.array:
-        """
-        Multi-head scaled-dot-product attention.
-
-        Parameters
-        ----------
-        x : array
-            Input sequence of shape (batch, seq_len, embed_dim).
-        attn_mask : array or None, optional
-            Boolean mask of shape (batch, seq_len, seq_len).
-            Positions that are ``False`` will be masked out (set to -inf)
-            before the softmax.  If ``None``, no masking is applied.
-
-        Returns
-        -------
-        array
-            Output tensor of shape  (batch, seq_len, embed_dim)
-        """
-
-        batch, seq_len, _ = x.shape
-
-        Q = self.W_q(x)  # (B, seq_len, emb_dim)
-        Q = self._split_heads(Q)
-        K = self.W_k(x)
-        K = self._split_heads(K)
-        V = self.W_v(x)
-        V = self._split_heads(V)
-
-        def mask_fill(qk: mx.array) -> mx.array:
-            if attn_mask is not None:
-                mask = mx.where(attn_mask, 0, -float("inf"))
-                qk = qk + mask.reshape(
-                    1, 1, *attn_mask.shape
-                )  # (B, num_heads, seq_len, seq_len), (1, 1, seq_len, seq_len)
-
-            return qk
-
-        score = (
-            mask_fill(Q @ K.transpose(0, 1, 3, 2)) * self.scaling
-        )  # (B, num_heads, seq_len, seq_len)
-        attention = mx.softmax(score, axis=-1) @ V  # (B, num_heads, seq_len, d_k)
-
-        multi_head = attention.transpose(
-            0, 2, 1, 3
-        ).reshape(
-            batch, seq_len, self.emb_dim
-        )  # (B, seq_len, H * d_k) # H * d_k = emb_dim. This is just the concatenation of each head’s d_k outputs. we haven’t yet “mixed” them into the model’s true embedding space, that happens in the final linear W_o.
-        multi_head = self.W_o(multi_head)  # (B, seq_len, emb_dim)
-
-        return multi_head
 
 
 class TransformerBlock(nn.Module):
@@ -97,12 +19,20 @@ class TransformerBlock(nn.Module):
         emb_dim: int,
         num_heads: int,
         ff_function: Union[FFN, MoE, ExpertChoiceMoE],
+        attention_type: str = "MultiHeadAttention",
         prob: float = 0.5,
     ):
         # ff_dim commonly is 4 times the size of emb_dim
         super().__init__()
 
-        self.attn_block = MultiHeadAttention(emb_dim, num_heads)
+        self.attn_block: None | MultiHeadAttention | GatedAttention = None
+
+        if attention_type == "MultiHeadAttention":
+            self.attn_block = MultiHeadAttention(emb_dim, num_heads)
+        elif attention_type == "GatedAttention":
+            self.attn_block = GatedAttention(emb_dim, num_heads)
+        else:
+            raise ValueError(f"Incorrect attention type: {attention_type}")
 
         self.ff = ff_function
         self.dropout = nn.Dropout(prob)
@@ -172,6 +102,7 @@ class DecoderTransformer(nn.Module):
         layers: int = config["layers"]
         num_heads: int = config["num_heads"]
         pos_embedding_type: str = config.get("pos_embedding_type", "absolute")
+        attention_type: str = config.get("attention_type", "MultiHeadAttention")
 
         routed_experts = num_experts - shared_experts
 
@@ -211,7 +142,7 @@ class DecoderTransformer(nn.Module):
             return ff_function
 
         self.transformer_blocks = [
-            TransformerBlock(emb_dim, num_heads, make_ff_function(), 0.5)
+            TransformerBlock(emb_dim=emb_dim, num_heads=num_heads, ff_function=make_ff_function(), attention_type=attention_type, prob=0.5)
             for _ in range(layers)
         ]
 
