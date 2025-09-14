@@ -1,0 +1,23 @@
+
+# Training Configuration
+training:
+  learning_rate: 0.0005
+  epochs: 1
+  batch_size: 128
+  sequence_length: 256
+
+# Data Configuration
+data:
+  source_file: "dataset/shakespeare.txt"
+
+# Model Configuration
+model:
+  type: "DecoderTransformer"
+  architecture:
+    max_length: 512  # Same as sequence_length
+    vocabulary_dimension: null  # Will be set from dataset.vocab_size
+    embedding_dimension: 128
+    attention_heads: 8
+    num_layers: 4
+    feedforward_dimension: 512  # 128 * 4
+    positional_embedding_type: "sinusoidal"

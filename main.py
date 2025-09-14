@@ -184,7 +184,7 @@ if __name__ == "__main__":
     model = DecoderTransformer(
         ff_function=config["model"]["type"],
         batch_size=batch_size,
-        max_len=seq_len,
+        max_len=config["model"]["architecture"]["max_length"],
         vocab_dim=train_dataset.vocab_size,
         emb_dim=config["model"]["architecture"]["embedding_dimension"],
         num_heads=config["model"]["architecture"]["attention_heads"],
@@ -195,6 +195,7 @@ if __name__ == "__main__":
         top_k_routers=config["model"]["architecture"].get("top_k_routers", 0),
         routing_type=config["model"]["architecture"].get("routing_type", 0),
         capacity_factor=config["model"]["architecture"].get("capacity_factor", 0),
+        pos_embedding_type=config["model"]["architecture"].get("positional_embedding_type", "absolute")
     )
 
     num_params = sum(v.size for _, v in tree_flatten(model.parameters()))

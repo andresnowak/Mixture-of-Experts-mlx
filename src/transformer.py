@@ -7,6 +7,7 @@ from typing import Union, Tuple, Dict, Any
 
 from .mlx_extension import multinomial
 from .moe import ExpertChoiceMoE, MoE, FFN
+from .positional_embeddings import sinusoidal_embeddings, absolute_embeddings
 
 # https://arxiv.org/abs/1706.03762, but we use pre-norm and dropout
 
@@ -170,11 +171,19 @@ class DecoderTransformer(nn.Module):
         capacity_factor: int = config.get("capacity_factor", 0)
         layers: int = config["layers"]
         num_heads: int = config["num_heads"]
+        pos_embedding_type: str = config.get("pos_embedding_type", "absolute")
 
         routed_experts = num_experts - shared_experts
 
         self.embedding = nn.Embedding(vocab_dim, emb_dim)
-        self.pos_embedding = mx.random.normal((max_len, emb_dim))
+        self.pos_embedding: None | mx.array = None
+
+        if pos_embedding_type == "absolute":
+            self.pos_embedding = absolute_embeddings(max_len, emb_dim)
+        elif pos_embedding_type == "sinusoidal":
+            self.pos_embedding = sinusoidal_embeddings(max_len, emb_dim)
+        else:
+            raise ValueError(f"Incorrect type of positional embedding {pos_embedding_type}")
 
         def make_ff_function() -> Union[FFN, MoE, ExpertChoiceMoE]:
             ff_function: Union[None, FFN, MoE, ExpertChoiceMoE] = None
