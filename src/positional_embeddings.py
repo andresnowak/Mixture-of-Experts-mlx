@@ -5,6 +5,7 @@ def absolute_embeddings(max_length: int, emb_dim: int) -> mx.array:
 
 
 def sinusoidal_embeddings(max_length: int, emb_dim: int) -> mx.array:
+    assert emb_dim % 2 == 0
     positions = mx.expand_dims(mx.arange(start=0, stop=max_length, step=1), axis=-1)
 
     dimensions = mx.arange(
