@@ -9,6 +9,7 @@
   - But if we see it as the whole row vector for that pos (so the whole embedding dimension) it is possible to have a repeating value but only if the sequence length is very large (and we basically won't have that)
 - This embeddings are called relative because $PE(pos) = PE(pos + k)$, the model only needs to learn a linear mapping function M that converts $M(K)PE(pos) = PE(pos + k)$
   - Remember the rules for $sin(a + b) = sin(a)cos(b) + cos(a)sin(b)$ and $cos(a + b) = cos(a)cos(b) - sin(a)sin(b)$, thanks to this it is possible to learn a linear function
+  - So the model basically learns attention biases for this M(K)
 - The advantages of sinusoidal embeddings is that the have the four properties of; periodicity, linearity, scale invariance and injective function.
   - So sinusoidal embedddings have the advantage that they can extend to bigger sequence lengths than the ones where the model was traineed on (because it only needed to learn relative distances, like if we trained with sequence length of 256 it learned relative distances of $0 \geq k \leq 255$), but performance still drops because the attention masking onlyh learned for sequences of length equal to 256
 - The disadvantages is that the model can't adapt the embedding space to the task at hand compared to the absolute ones, and when the size of your generation doesn't change (like it will always be the sequence length or smaller) absolute embeddings can outperform sinusoidal ones
