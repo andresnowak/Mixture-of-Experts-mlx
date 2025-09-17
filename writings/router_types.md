@@ -26,7 +26,7 @@
         - Or we do the TopK after the softmax instead
 
 - **Expert Choice Routing (from *Mixture-of-Experts with Expert Choice Routing*)**
-<img src="./images/expert-choice-routing.png" width="600px"></img>
+<img src="../images/expert-choice-routing.png" width="600px"></img>
   - For this version now the idea is that the amount experts used for a token can be variable (instead of having a forced $K$ amount of experts), and here instead each expert can only use $K$ amount of tokens
   - So basically this version tries to fix the problems of:
     - Load imbalance: Because it is possible for some experts to be under-utilized during training and a sub-optimal strategy can produce redundant experts and/or experts that are not sufficiently specialized

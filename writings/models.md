@@ -1,5 +1,5 @@
 ## DeepSeek-MoE
-<img src="./images/deepseek-moe.png" width="600px"></img>
+<img src="../images/deepseek-moe.png" width="600px"></img>
 
 The two important contributions of DeepSeek-MoE are
  - Finely segmenting the exeprts
