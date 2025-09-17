@@ -196,7 +196,8 @@ if __name__ == "__main__":
         routing_type=config["model"]["architecture"].get("routing_type", 0),
         capacity_factor=config["model"]["architecture"].get("capacity_factor", 0),
         pos_embedding_type=config["model"]["architecture"].get("positional_embedding_type", "absolute"),
-        attention_type=config["model"]["architecture"].get("attention_type", "MultiHeadAttention")
+        attention_type=config["model"]["architecture"].get("attention_type", "MultiHeadAttention"),
+        use_rope=config["model"]["architecture"].get("use_rope", False)
     )
 
     num_params = sum(v.size for _, v in tree_flatten(model.parameters()))

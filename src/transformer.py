@@ -16,11 +16,13 @@ from .attention import MultiHeadAttention, GatedAttention
 class TransformerBlock(nn.Module):
     def __init__(
         self,
+        max_seq_len: int,
         emb_dim: int,
         num_heads: int,
         ff_function: Union[FFN, MoE, ExpertChoiceMoE],
         attention_type: str = "MultiHeadAttention",
         prob: float = 0.5,
+        use_rope: bool = False
     ):
         # ff_dim commonly is 4 times the size of emb_dim
         super().__init__()
@@ -28,9 +30,9 @@ class TransformerBlock(nn.Module):
         self.attn_block: None | MultiHeadAttention | GatedAttention = None
 
         if attention_type == "MultiHeadAttention":
-            self.attn_block = MultiHeadAttention(emb_dim, num_heads)
+            self.attn_block = MultiHeadAttention(max_seq_len, emb_dim, num_heads, use_rope=use_rope)
         elif attention_type == "GatedAttention":
-            self.attn_block = GatedAttention(emb_dim, num_heads)
+            self.attn_block = GatedAttention(max_seq_len, emb_dim, num_heads, use_rope=use_rope)
         else:
             raise ValueError(f"Incorrect attention type: {attention_type}")
 
@@ -103,6 +105,7 @@ class DecoderTransformer(nn.Module):
         num_heads: int = config["num_heads"]
         pos_embedding_type: str = config.get("pos_embedding_type", "absolute")
         attention_type: str = config.get("attention_type", "MultiHeadAttention")
+        use_rope: bool = config.get("use_rope", False)
 
         routed_experts = num_experts - shared_experts
 
@@ -142,7 +145,7 @@ class DecoderTransformer(nn.Module):
             return ff_function
 
         self.transformer_blocks = [
-            TransformerBlock(emb_dim=emb_dim, num_heads=num_heads, ff_function=make_ff_function(), attention_type=attention_type, prob=0.5)
+            TransformerBlock(max_seq_len=max_len, emb_dim=emb_dim, num_heads=num_heads, ff_function=make_ff_function(), attention_type=attention_type, prob=0.5, use_rope=use_rope)
             for _ in range(layers)
         ]
 

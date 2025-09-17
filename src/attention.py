@@ -2,9 +2,11 @@ import mlx.core as mx
 import mlx.nn as nn
 import numpy as np
 
+from .positional_embeddings import RoPE
+
 class MultiHeadAttention(nn.Module):
     # Multi-head attention, implementation from https://arxiv.org/abs/1706.03762
-    def __init__(self, emb_dim: int, num_heads: int, bias=True):
+    def __init__(self, max_seq_len: int, emb_dim: int, num_heads: int, bias: bool=True, use_rope: bool=False):
         # Dimension of model (emb_dim) is equal to num_heads * d_k, d_k = emb_dim / num_heads
         # emb_dim has to be divisble by num_heads
 
@@ -16,6 +18,10 @@ class MultiHeadAttention(nn.Module):
         self.emb_dim = emb_dim
         d_k = emb_dim // num_heads
         self.scaling: float = 1 / np.sqrt(d_k)
+
+        self.rope = None
+        if use_rope:
+            self.rope = RoPE(max_seq_len, emb_dim)
 
         self.W_q = nn.Linear(emb_dim, emb_dim, bias=bias)
         self.W_k = nn.Linear(emb_dim, emb_dim, bias=bias)
@@ -51,10 +57,15 @@ class MultiHeadAttention(nn.Module):
         batch, seq_len, _ = x.shape
 
         Q = self.W_q(x)  # (B, seq_len, emb_dim)
-        Q = self._split_heads(Q)
         K = self.W_k(x)
-        K = self._split_heads(K)
         V = self.W_v(x)
+
+        if self.rope != None:
+            Q = self.rope(Q)
+            K = self.rope(K)
+
+        Q = self._split_heads(Q)
+        K = self._split_heads(K)
         V = self._split_heads(V)
 
         def mask_fill(qk: mx.array) -> mx.array:
@@ -83,7 +94,7 @@ class MultiHeadAttention(nn.Module):
 
 class GatedAttention(nn.Module):
     # Gated Attention, implementation from https://arxiv.org/abs/2505.06708
-    def __init__(self, emb_dim: int, num_heads: int, bias=True):
+    def __init__(self, max_seq_len:int, emb_dim: int, num_heads: int, bias: bool=True, use_rope: bool=False):
         # Dimension of model (emb_dim) is equal to num_heads * d_k, d_k = emb_dim / num_heads
         # emb_dim has to be divisble by num_heads
 
@@ -95,6 +106,10 @@ class GatedAttention(nn.Module):
         self.emb_dim = emb_dim
         d_k = emb_dim // num_heads
         self.scaling: float = 1 / np.sqrt(d_k)
+
+        self.rope = None
+        if use_rope:
+            self.rope = RoPE(max_seq_len, emb_dim)
 
         self.W_q = nn.Linear(emb_dim, emb_dim, bias=bias)
         self.W_k = nn.Linear(emb_dim, emb_dim, bias=bias)
@@ -132,10 +147,15 @@ class GatedAttention(nn.Module):
         batch, seq_len, _ = x.shape
 
         Q = self.W_q(x)  # (B, seq_len, emb_dim)
-        Q = self._split_heads(Q) # (B, num_heads, seq_len, d_k)
         K = self.W_k(x)
-        K = self._split_heads(K)
         V = self.W_v(x)
+
+        if self.rope != None:
+            Q = self.rope(Q)
+            K = self.rope(K)
+
+        Q = self._split_heads(Q)# (B, num_heads, seq_len, d_k)
+        K = self._split_heads(K)
         V = self._split_heads(V)
 
         def mask_fill(qk: mx.array) -> mx.array:
