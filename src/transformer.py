@@ -105,17 +105,19 @@ class DecoderTransformer(nn.Module):
         num_heads: int = config["num_heads"]
         pos_embedding_type: str = config.get("pos_embedding_type", "absolute")
         attention_type: str = config.get("attention_type", "MultiHeadAttention")
-        use_rope: bool = config.get("use_rope", False)
 
         routed_experts = num_experts - shared_experts
 
         self.embedding = nn.Embedding(vocab_dim, emb_dim)
         self.pos_embedding: None | mx.array = None
+        self.use_rope = False
 
         if pos_embedding_type == "absolute":
             self.pos_embedding = absolute_embeddings(max_len, emb_dim)
         elif pos_embedding_type == "sinusoidal":
             self.pos_embedding = sinusoidal_embeddings(max_len, emb_dim)
+        elif pos_embedding_type == "RoPE":
+            self.use_rope = True
         else:
             raise ValueError(f"Incorrect type of positional embedding {pos_embedding_type}")
 
@@ -145,7 +147,7 @@ class DecoderTransformer(nn.Module):
             return ff_function
 
         self.transformer_blocks = [
-            TransformerBlock(max_seq_len=max_len, emb_dim=emb_dim, num_heads=num_heads, ff_function=make_ff_function(), attention_type=attention_type, prob=0.5, use_rope=use_rope)
+            TransformerBlock(max_seq_len=max_len, emb_dim=emb_dim, num_heads=num_heads, ff_function=make_ff_function(), attention_type=attention_type, prob=0.5, use_rope=self.use_rope)
             for _ in range(layers)
         ]
 
@@ -175,9 +177,11 @@ class DecoderTransformer(nn.Module):
         attn_mask = mx.tril(mx.ones((seq_len, seq_len)), k=0)
 
         embedding = self.embedding(x.squeeze(axis=-1))
-        pos_embedding = self.pos_embedding[:seq_len, :]
+        x = embedding
 
-        x = embedding + pos_embedding
+        if not self.use_rope:
+            pos_embedding = self.pos_embedding[:seq_len, :]
+            x += pos_embedding
 
         total_aux_loss = mx.array(0.0)
 

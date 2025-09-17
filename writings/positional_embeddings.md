@@ -13,3 +13,71 @@
 - The advantages of sinusoidal embeddings is that the have the four properties of; periodicity, linearity, scale invariance and injective function.
   - So sinusoidal embedddings have the advantage that they can extend to bigger sequence lengths than the ones where the model was traineed on (because it only needed to learn relative distances, like if we trained with sequence length of 256 it learned relative distances of $0 \geq k \leq 255$), but performance still drops because the attention masking only learned for sequences of length equal to 256
 - The disadvantages is that the model can't adapt the embedding space to the task at hand compared to the absolute ones, and when the size of your generation doesn't change (like it will always be the sequence length or smaller) absolute embeddings can outperform sinusoidal ones
+
+## RoPE
+[This can be a better explanation of RoPE](https://medium.com/@mlshark/rope-a-detailed-guide-to-rotary-position-embedding-in-modern-llms-fde71785f152#bypass) and this [one](https://blog.eleuther.ai/rotary-embeddings/)
+
+The idea is that if we try to encode absolute positions in the token embeddings, we have
+the problem that the dot product (and therefore attention) doesn't preserve this information:
+the positional part just mixes with content and you lose a clear signal of distance. So
+if we bake absolute positions into the embeddings, attention can’t tell how far apart two
+tokens really are. We want scores that depend on $n-m$, not on $m$ or $n$ alone.
+
+RoPE encodes position as a pure rotation in $\mathbb{C}^{d/2}$. Instead of working in
+$\mathbb{R}^d$, we view each consecutive pair of real components as one complex number:
+$$
+q^{\mathbb{C}} = \bigl(q_1 + i\,q_2,\;q_3 + i\,q_4,\;\dots,\;q_{d-1} + i\,q_d\bigr)
+\in \mathbb{C}^{d/2},
+$$
+and similarly for $k^{\mathbb{C}}$.
+
+First recall from polar coordinates that any complex can be written as
+$$
+z = r\,e^{i\theta},\qquad e^{i\theta} = \cos\theta + i\,\sin\theta,
+$$
+where $r=|z|$ is the vector norm. Because $|e^{i\theta}|=1$, multiplying by $e^{i\theta}$
+rotates $z$ without changing its length. Concretely, for $z = x + i y$:
+
+$$(z)\,e^{i\theta} = (x + i\,y)(\cos\theta + i\,\sin\theta) = (x\cos\theta - y\sin\theta) + i\,(x\sin\theta + y\cos\theta)$$
+
+Next assign each token position $m$ a phase $\phi_m = m\,\omega$. We rotate each 2D
+subvector of the query by $e^{i\phi_m}$ and each subvector of the key by $e^{i\phi_n}$.
+
+To see how the real dot product arises, take $z = x + i\,y$ and $w = u + i\,v$. The real
+2D dot product $xu + yv$ is recovered by
+$$
+\Re\bigl[z\,\overline{w}\bigr]
+= \Re\bigl[(x + i\,y)(u - i\,v)\bigr]
+= x\,u + y\,v.
+$$
+In polar form $z = r_z e^{i\theta_z}$, $w = r_w e^{i\theta_w}$, we have
+$$
+z\,\overline{w} = r_z\,r_w\,e^{i(\theta_z - \theta_w)},
+\quad
+\Re[\cdot] = r_z\,r_w\cos(\theta_z - \theta_w).
+$$
+After rotating by $\phi_m,\phi_n$, the score in each complex plane is
+$$
+\Re\Bigl[(q_i^{\mathbb{C}}\,e^{i\phi_m})\,
+         \overline{(k_i^{\mathbb{C}}\,e^{i\phi_n})}\Bigr]
+= \|q_i\|\|k_i\|\cos(\phi_m - \phi_n).
+$$
+Since $\phi_m - \phi_n = (m-n)\,\omega$, this depends *only* on $n-m$.
+
+Equivalently, each 2D pair undergoes the real rotation
+$$
+R(\theta) =
+\begin{pmatrix}
+  \cos\theta & -\sin\theta\\
+  \sin\theta &  \cos\theta
+\end{pmatrix}.
+$$
+Define
+$$
+f_q(x_m,m) = R(m\omega)\,q,\quad
+f_k(x_n,n) = R(n\omega)\,k,
+$$
+with $q = W_q\,x_m$, $k = W_k\,x_n$. Then
+$$
+\langle f_q(x_m,m), f_k(x_n,n)\rangle
+= q^\top R((n-m)\omega)\,k$$

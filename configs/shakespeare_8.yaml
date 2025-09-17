@@ -28,4 +28,4 @@ model:
     routing_type: "MoE"
     capacity_factor: 0
     attention_type: "GatedAttention"
-    use_rope: true
+    positional_embedding_type: "RoPE"
