@@ -150,7 +150,7 @@ class GatedAttention(nn.Module):
         K = self.W_k(x)
         V = self.W_v(x)
 
-        if self.rope != None:
+        if self.rope is not None:
             Q = self.rope(Q)
             K = self.rope(K)
 
