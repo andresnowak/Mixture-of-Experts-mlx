@@ -7,63 +7,6 @@ import numpy as np
 from .aux_losses import compute_expert_load_balance_loss
 from .mlx_extension import one_hot
 
-
-class TopKRouter(nn.Module):
-    def __init__(
-        self,
-        hidden_dim: int,
-        shared_experts: int,
-        routed_experts: int,
-        top_k_routers: int,
-    ):
-        super().__init__()
-
-        self.shared_experts = shared_experts
-        self.routed_experts = routed_experts
-
-        self.total_experts = shared_experts + routed_experts
-
-        self.top_k_routers = top_k_routers
-
-        self.expert_embeddings = nn.Linear(hidden_dim, self.total_experts, bias=False)
-
-    def __call__(self, x: mx.array) -> Tuple[mx.array, mx.array]:
-        """
-        TopK router
-
-        Parameters
-        ----------
-        x : array
-            Output form the Attention head (batch, seq_len, embed_dim).
-
-        Returns
-        -------
-        array
-            Affinity scores of the top_k_routers + shared experts to each token (batch, seq_len, top_k_routers + shared_experts)
-        array
-            Output indices saying which experts we will compute with (batch, seq_len, top_k_routers + shared_experts)
-        """
-        score_logits = self.expert_embeddings(x)  # (batch, seq_len, total_experts)
-
-        score_logits[..., : self.shared_experts] = -float(
-            "inf"
-        )  # so shared experts don't affect the scores of the routed experts (they will go to 0)
-
-        score_gate = mx.softmax(
-            score_logits, axis=-1
-        )  # u_t * e_i, (Batch, seq_len, total_experts)
-
-        score_gate[..., : self.shared_experts] = 1.0
-
-        top_experts_indices = mx.stop_gradient(
-            mx.argpartition(
-                -score_gate, kth=self.top_k_routers + self.shared_experts, axis=-1
-            )
-        )[..., : self.top_k_routers + self.shared_experts]
-
-        return score_gate, top_experts_indices
-
-
 class FFN(nn.Module):
     def __init__(self, hidden_dim: int, ff_dim: int):
         super().__init__()
@@ -92,9 +35,7 @@ class MoE(nn.Module):
 
         self.top_k_routers = top_k_routers
 
-        self.router = TopKRouter(
-            hidden_dim, shared_experts, routed_experts, top_k_routers
-        )
+        self.expert_embeddings = nn.Linear(hidden_dim, self.total_experts, bias=False)
 
         self.experts = [FFN(hidden_dim, ff_dim) for _ in range(self.total_experts)]
 
@@ -116,15 +57,33 @@ class MoE(nn.Module):
             Experts affinites scores of form (batch, seq_len, total_experts)
         """
 
-        return self.__naive(x, return_load_balance_loss)
+        # Top-K router
+        score_logits = self.expert_embeddings(x)  # (batch, seq_len, total_experts)
+        score_logits[..., : self.shared_experts] = -float(
+            "inf"
+        )  # so shared experts don't affect the scores of the routed experts (they will go to 0)
+
+        experts_affinity = mx.softmax(
+            score_logits, axis=-1
+        )  # u_t * e_i, (Batch, seq_len, total_experts)
+
+        experts_affinity[..., : self.shared_experts] = 1.0
+
+        experts_indices = mx.stop_gradient(
+            mx.argpartition(
+                -experts_affinity, kth=self.top_k_routers + self.shared_experts, axis=-1
+            )
+        )[..., : self.top_k_routers + self.shared_experts]
+
+        return self.__naive(x, experts_affinity, experts_indices, return_load_balance_loss)
 
     def __naive(
-        self, x: mx.array, return_load_balance_loss: bool = False
+        self, x: mx.array, experts_affinity: mx.array, experts_indices: mx.array, return_load_balance_loss: bool = False
     ) -> mx.array | Tuple[mx.array, mx.array]:
         batch, seq_len, emb_dim = x.shape
         num_tokens = batch * seq_len
 
-        experts_affinity, experts_indices = self.router(x)
+        # Route the computations
 
         selected_experts_affinity = mx.take_along_axis(
             experts_affinity, experts_indices, axis=-1
@@ -237,7 +196,9 @@ class ExpertChoiceMoE(nn.Module):
         affinity_scores: mx.array,
         total_tokens: int,
     ) -> mx.array:
-        x_out = mx.zeros_like(x)
+        x_out = mx.zeros_like(
+            x
+        )  # The dropped tokens will be added in the residual connection (so there is no problem there, it is like we just skipped the computation in this layer for those tokens, thats it)
 
         for e in range(self.num_experts):
             output = self.experts[e](
