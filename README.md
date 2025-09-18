@@ -163,3 +163,15 @@ python main.py \
       url={https://arxiv.org/abs/2104.09864},
 }
 ```
+
+```bibtex
+@misc{jin2024moeacceleratingmixtureofexpertsmethods,
+      title={MoE++: Accelerating Mixture-of-Experts Methods with Zero-Computation Experts},
+      author={Peng Jin and Bo Zhu and Li Yuan and Shuicheng Yan},
+      year={2024},
+      eprint={2410.07348},
+      archivePrefix={arXiv},
+      primaryClass={cs.LG},
+      url={https://arxiv.org/abs/2410.07348},
+}
+```
