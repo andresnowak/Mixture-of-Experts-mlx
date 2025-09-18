@@ -4,6 +4,7 @@ from typing_extensions import Sequence
 from .mlx_extension import one_hot
 
 
+@mx.compile
 def compute_expert_load_balance_loss(
     shared_experts: int,
     routed_experts: int,
@@ -52,6 +53,7 @@ def compute_expert_load_balance_loss(
     return load_balance_loss
 
 
+@mx.compile
 def compute_load_balance_loss(
     num_experts: int,
     gate_probs: mx.array,
@@ -92,6 +94,7 @@ def compute_load_balance_loss(
     return load_balance_loss
 
 
+@mx.compile
 def compute_heterogeneous_load_balance_loss(
     total_num_experts: int,
     num_each_type_of_expert: Sequence[int],
@@ -142,7 +145,8 @@ def compute_heterogeneous_load_balance_loss(
 
     N_ffn = num_each_type_of_expert[0]
     N = total_num_experts
-    mask = mx.stack(
+
+    mask = mx.concatenate(
         [mx.ones((N_ffn,)), zc_allocation_weight * mx.ones((N - N_ffn,))], axis=0
     ).astype(mean_gate_probs.dtype) # so as to give the zc_allocation_weight to the zero computation experts
 

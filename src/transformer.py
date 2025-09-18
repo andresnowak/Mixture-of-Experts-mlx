@@ -47,7 +47,9 @@ class TransformerBlock(nn.Module):
         x: mx.array,
         attn_mask: mx.array | None = None,
         return_aux_loss: bool = False,
-    ) -> mx.array | Tuple[mx.array, mx.array]:
+        use_gating_routing_scores_residuals: bool = False,
+        score_logits: mx.array | None = None,
+    ) -> Tuple[mx.array, Dict[str, mx.array | None]]:
         """
         Transformer block
 
@@ -64,23 +66,27 @@ class TransformerBlock(nn.Module):
         """
 
         attention = self.attn_block(self.norm_1(x), attn_mask)
+        # residual attention
         x = x + attention
 
         aux_loss = mx.array(0.0)
 
-        if isinstance(self.ff, MoE) and return_aux_loss:
-            ff, aux_loss = self.ff(self.norm_2(x), return_aux_loss)
+        if isinstance(self.ff, MoE):
+            ff, extra_results = self.ff(self.norm_2(x), return_load_balance_loss=return_aux_loss)
+            aux_loss = extra_results["aux_loss"]
+        elif isinstance(self.ff, MoEPlusPlus):
+            ff, extra_results = self.ff(self.norm_2(x), return_load_balance_loss=return_aux_loss, use_gating_routing_scores_residuals=use_gating_routing_scores_residuals, previous_score_logits=score_logits)
+            aux_loss = extra_results["aux_loss"]
+            score_logits = extra_results["score_logits"]
         else:
             ff = self.ff(self.norm_2(x))
 
         ff = self.dropout(ff)
 
+        # residual ff
         x = x + ff  # (Batch, seq_len, emb_dim)
 
-        if return_aux_loss:
-            return x, aux_loss
-
-        return x
+        return x, {"aux_loss": aux_loss, "score_logits": score_logits}
 
 
 class DecoderTransformer(nn.Module):
@@ -177,7 +183,7 @@ class DecoderTransformer(nn.Module):
         self.proj_ff = nn.Linear(emb_dim, vocab_dim, bias=False)
 
     def __call__(
-        self, x: mx.array, return_aux_loss: bool = False
+        self, x: mx.array, return_aux_loss: bool = False, use_gating_routing_scores_residuals: bool = False
     ) -> mx.array | Tuple[mx.array, mx.array]:
         """
         MoE Decoder Transformer
@@ -207,13 +213,14 @@ class DecoderTransformer(nn.Module):
             x += pos_embedding
 
         total_aux_loss = mx.array(0.0)
+        prev_score_logits = None
 
         for transformer_block in self.transformer_blocks:
-            if return_aux_loss:
-                x, aux_loss = transformer_block(x, attn_mask, return_aux_loss)
-                total_aux_loss = total_aux_loss + aux_loss
-            else:
-                x = transformer_block(x, attn_mask)
+            x, extra_results = transformer_block(x, attn_mask, return_aux_loss, use_gating_routing_scores_residuals=use_gating_routing_scores_residuals, score_logits=prev_score_logits)
+            aux_loss = extra_results["aux_loss"]
+
+            total_aux_loss = total_aux_loss + aux_loss
+            prev_score_logits = extra_results["score_logits"]
 
         x = self.proj_ff(x)  # raw logits in the form (batch, seq_len, vocab_dim)
 

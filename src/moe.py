@@ -1,4 +1,4 @@
-from typing import Tuple
+from typing import Tuple, Dict
 
 import mlx.core as mx
 import mlx.nn as nn
@@ -81,7 +81,7 @@ class MoE(nn.Module):
 
     def __call__(
         self, x: mx.array, return_load_balance_loss: bool = False
-    ) -> mx.array | Tuple[mx.array, mx.array]:
+    ) -> Tuple[mx.array, Dict[str, mx.array | None]]:
         """
         MoE router
 
@@ -96,6 +96,8 @@ class MoE(nn.Module):
             Output Tensor of form (batch, seq_len, embed_dim)
             Experts affinites scores of form (batch, seq_len, total_experts)
         """
+
+        batch, seq_len, _ = x.shape
 
         # Top-K router
         score_logits = self.expert_embeddings(x)  # (batch, seq_len, total_experts)
@@ -115,19 +117,28 @@ class MoE(nn.Module):
             )
         )[..., : self.top_k_routers + self.shared_experts]
 
-        return self.__naive(
-            x, experts_affinity, experts_indices, return_load_balance_loss
-        )
+        result = self.__naive(x, experts_affinity, experts_indices)
+
+        load_balance_loss = None
+        if return_load_balance_loss:
+            load_balance_loss = compute_expert_load_balance_loss(
+                self.shared_experts,
+                self.routed_experts,
+                self.top_k_routers,
+                experts_affinity,
+                experts_indices,
+                batch * seq_len,
+            )
+
+        return result, {"aux_loss": load_balance_loss}
 
     def __naive(
         self,
         x: mx.array,
         experts_affinity: mx.array,
         experts_indices: mx.array,
-        return_load_balance_loss: bool = False,
-    ) -> mx.array | Tuple[mx.array, mx.array]:
+    ) -> mx.array:
         batch, seq_len, emb_dim = x.shape
-        num_tokens = batch * seq_len
 
         selected_experts_affinity = mx.take_along_axis(
             experts_affinity, experts_indices, axis=-1
@@ -135,10 +146,10 @@ class MoE(nn.Module):
 
         routed_output = mx.zeros(
             (
-                x.shape[0],
-                x.shape[1],
+                batch,
+                seq_len,
                 self.top_k_routers + self.shared_experts,
-                x.shape[2],
+                emb_dim,
             )
         )
 
@@ -161,17 +172,6 @@ class MoE(nn.Module):
         routed_output = (
             routed_output * mx.expand_dims(selected_experts_affinity, axis=-1)
         ).sum(axis=2)
-
-        if return_load_balance_loss:
-            load_balance_loss = compute_expert_load_balance_loss(
-                self.shared_experts,
-                self.routed_experts,
-                self.top_k_routers,
-                experts_affinity,
-                experts_indices,
-                num_tokens,
-            )
-            return routed_output, load_balance_loss
 
         return routed_output
 
@@ -229,9 +229,11 @@ class ExpertChoiceMoE(nn.Module):
             mx.argpartition(-affinity_scores.transpose(1, 0), kth=top_k_tokens, axis=-1)
         )[..., :top_k_tokens]  # (E, top_k_tokens)
 
-        return self.__naive(
+        result = self.__naive(
             x_input, chosen_tokens_indices, affinity_scores, batch * seq_len
         ).reshape(batch, seq_len, hidden_dim)
+
+        return result
 
     def __naive(
         self,
@@ -240,9 +242,8 @@ class ExpertChoiceMoE(nn.Module):
         affinity_scores: mx.array,
         total_tokens: int,
     ) -> mx.array:
-        x_out = mx.zeros_like(
-            x
-        )  # The dropped tokens will be added in the residual connection (so there is no problem there, it is like we just skipped the computation in this layer for those tokens, thats it)
+        x_out = mx.zeros_like(x)
+        # The dropped tokens will be added in the residual connection (so there is no problem there, it is like we just skipped the computation in this layer for those tokens, thats it)
 
         for e in range(self.num_experts):
             output = self.experts[e](
@@ -336,9 +337,10 @@ class MoEPlusPlus(nn.Module):
     def __call__(
         self,
         x: mx.array,
-        previous_score_logits: None | mx.array = None,
         return_load_balance_loss: bool = False,
-    ) -> mx.array | Tuple[mx.array, mx.array]:
+        use_gating_routing_scores_residuals: bool = False,
+        previous_score_logits: None | mx.array = None,
+    ) -> Tuple[mx.array, Dict[str, mx.array | None]]:
         """
         MoE++
 
@@ -360,7 +362,7 @@ class MoEPlusPlus(nn.Module):
         # Top-K router
         score_logits = self.expert_embeddings(x)  # (batch * seq_len, total_experts)
         if previous_score_logits is not None:
-            score_logits = score_logits + previous_score_logits
+            score_logits = score_logits + self.gating_weight_matrix(previous_score_logits)
 
         experts_affinity = mx.softmax(
             score_logits, axis=-1
@@ -369,12 +371,12 @@ class MoEPlusPlus(nn.Module):
         experts_indices = mx.stop_gradient(
             mx.argpartition(-experts_affinity, kth=self.top_k_routers, axis=-1)
         )[..., : self.top_k_routers]
-        # TODO: Add also the method to instead do the top_k selection after softmax
 
         routed_output = self.__naive(x, experts_affinity, experts_indices).reshape(
             batch, seq_len, embed_dim
         )
 
+        load_balance_loss = None
         if return_load_balance_loss:
             load_balance_loss = compute_heterogeneous_load_balance_loss(
                 self.total_experts,
@@ -384,9 +386,12 @@ class MoEPlusPlus(nn.Module):
                 batch * seq_len,
                 self.zc_allocation_weight,
             )
-            return routed_output, load_balance_loss
 
-        return routed_output
+        next_score_logits = None
+        if use_gating_routing_scores_residuals:
+            next_score_logits = score_logits
+
+        return routed_output, {"aux_loss": load_balance_loss, "score_logits": next_score_logits}
 
     def __naive(
         self,

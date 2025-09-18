@@ -87,18 +87,19 @@ def train(
     batch_size: int,
     seq_len: int,
     use_aux_loss: bool = False,
+    use_gating_routing_scores_residuals: bool = False,
     expert_level_balance: float = 0.01,  # Weight for load balancing loss
 ):
-    def loss_fn(model, x, y, use_aux_loss: bool = False):
+    def loss_fn(model, x, y, use_aux_loss: bool = False, use_gating_routing_scores_residuals: bool = False):
         if use_aux_loss:
-            out, load_balance_loss = model(x, return_aux_loss=use_aux_loss)
+            out, load_balance_loss = model(x, return_aux_loss=use_aux_loss, use_gating_routing_scores_residuals=use_gating_routing_scores_residuals)
             cross_entropy_loss = nn.losses.cross_entropy(out, y, reduction="mean")
             total_loss = cross_entropy_loss + expert_level_balance * load_balance_loss
             # both heterogeneous, normal and expert load balance use the same expert level balance variable
 
             return total_loss, (cross_entropy_loss, load_balance_loss, out)
         else:
-            out = model(x)
+            out = model(x, return_aux_loss=use_aux_loss, use_gating_routing_scores_residuals=use_gating_routing_scores_residuals)
             cross_entropy_loss = nn.losses.cross_entropy(out, y, reduction="mean")
             return cross_entropy_loss, (cross_entropy_loss, mx.array(0.0), out)
 
@@ -124,7 +125,7 @@ def train(
                 x_batch = mx.expand_dims(x_batch, -1)
 
                 # Don't know how to get the model outputs and also the loss
-                (loss, (main_loss, aux_loss, out)), grads = loss_and_grad_fn(model, x_batch, y_batch, use_aux_loss)
+                (loss, (main_loss, aux_loss, out)), grads = loss_and_grad_fn(model, x_batch, y_batch, use_aux_loss, use_gating_routing_scores_residuals)
 
                 optimizer.update(model, grads)
 
@@ -179,6 +180,7 @@ if __name__ == "__main__":
     seq_len = config["training"]["sequence_length"]
     expert_level_balance = config["training"].get("expert_level_balance", 0.01)
     use_aux_loss = config["training"].get("use_aux_loss", False)
+    use_gating_routing_scores_residuals = config["training"].get("use_gating_routing_scores_residuals", False)
 
     text = open(config["data"]["source_file"], "r").read()
     train_dataset = StoryDataset(text, batch_size, seq_len)
@@ -212,7 +214,7 @@ if __name__ == "__main__":
     print(f"Save file checkpoint: {args.checkpoint}")
 
     if args.train:
-        train(model, train_dataset, lr, epochs, batch_size, seq_len, use_aux_loss, expert_level_balance)
+        train(model, train_dataset, lr, epochs, batch_size, seq_len, use_aux_loss=use_aux_loss, expert_level_balance=expert_level_balance, use_gating_routing_scores_residuals=use_gating_routing_scores_residuals)
 
         model.save_weights(args.checkpoint)
     else:

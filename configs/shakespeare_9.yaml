@@ -7,6 +7,7 @@ training:
   sequence_length: 256
   expert_level_balance: 0.01
   use_aux_loss: true
+  use_gating_routing_scores_residuals: true
 
 # Data Configuration
 data:

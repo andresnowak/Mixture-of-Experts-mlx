@@ -1,6 +1,7 @@
 import mlx.core as mx
 
 
+@mx.compile
 def multinomial(
     x: mx.array, num_samples: int = 1, replacement: bool = False
 ) -> mx.array:
@@ -36,6 +37,7 @@ def multinomial(
     return indices  # (B, num_samples)
 
 
+@mx.compile
 def one_hot(x: mx.array, num_classes: int):
     # assert x.dtype in [mx.uint8, mx.uint16, mx.uint32, mx.uint64, mx.int8, mx.int16, mx.int32, mx.int64, mx.unsignedinteger, mx.integer]
 

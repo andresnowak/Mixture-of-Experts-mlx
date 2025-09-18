@@ -1,0 +1,1 @@
+- Add also the method to instead do the top_k selection before softmax (so to the logits)
