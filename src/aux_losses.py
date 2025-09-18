@@ -111,7 +111,7 @@ def compute_heterogeneous_load_balance_loss(
     gate_probs : array
         Gate softmax probabilities (batch, seq_len, total_experts)
     expert_indices : array
-        Selected expert indices (batch, seq_len, top_k_routers + shared_experts)
+        Selected expert indices (batch, seq_len, top_k_routers)
     num_tokens : int
         Total number of tokens in the batch
     zc_allocation_weight: float

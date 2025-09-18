@@ -94,6 +94,8 @@ def train(
             out, load_balance_loss = model(x, return_aux_loss=use_aux_loss)
             cross_entropy_loss = nn.losses.cross_entropy(out, y, reduction="mean")
             total_loss = cross_entropy_loss + expert_level_balance * load_balance_loss
+            # both heterogeneous, normal and expert load balance use the same expert level balance variable
+
             return total_loss, (cross_entropy_loss, load_balance_loss, out)
         else:
             out = model(x)
@@ -192,9 +194,13 @@ if __name__ == "__main__":
         ff_dim=config["model"]["architecture"]["feedforward_dimension"],
         shared_experts=config["model"]["architecture"].get("shared_experts", 0),
         num_experts=config["model"]["architecture"].get("num_experts", 0),
+        num_zero_experts=config["model"]["architecture"].get("num_zero_experts", 0),
+        num_identity_experts=config["model"]["architecture"].get("num_identity_experts", 0),
+        num_constant_experts=config["model"]["architecture"].get("num_constant_experts", 0),
         top_k_routers=config["model"]["architecture"].get("top_k_routers", 0),
         routing_type=config["model"]["architecture"].get("routing_type", 0),
         capacity_factor=config["model"]["architecture"].get("capacity_factor", 0),
+        zc_allocation_weight=config["model"]["architecture"].get("zc_allocation_weight", 0),
         pos_embedding_type=config["model"]["architecture"].get("positional_embedding_type", "absolute"),
         attention_type=config["model"]["architecture"].get("attention_type", "MultiHeadAttention"),
     )

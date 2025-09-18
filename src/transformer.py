@@ -6,7 +6,7 @@ import numpy as np
 from typing import Union, Tuple, Dict, Any
 
 from .mlx_extension import multinomial
-from .moe import ExpertChoiceMoE, MoE, FFN
+from .moe import ExpertChoiceMoE, MoE, FFN, MoEPlusPlus
 from .positional_embeddings import sinusoidal_embeddings, absolute_embeddings
 from .attention import MultiHeadAttention, GatedAttention
 
@@ -19,7 +19,7 @@ class TransformerBlock(nn.Module):
         max_seq_len: int,
         emb_dim: int,
         num_heads: int,
-        ff_function: Union[FFN, MoE, ExpertChoiceMoE],
+        ff_function: Union[FFN, MoE, ExpertChoiceMoE, MoEPlusPlus],
         attention_type: str = "MultiHeadAttention",
         prob: float = 0.5,
         use_rope: bool = False
@@ -97,10 +97,19 @@ class DecoderTransformer(nn.Module):
         routing_type: str | None = config.get("routing_type", None)
         max_len: int = config["max_len"]
         ff_dim: int = config["ff_dim"]
+
         num_experts: int = config.get("num_experts", 0)
         shared_experts: int = config.get("shared_experts", 0)
+
+        num_zero_experts: int = config.get("num_zero_experts", 0)
+        num_identity_experts: int = config.get("num_identity_experts", 0)
+        num_constant_experts: int = config.get("num_constant_experts", 0)
+
         top_k_routers: int = config.get("top_k_routers", 0)
         capacity_factor: int = config.get("capacity_factor", 0)
+
+        zc_allocation_weight: float = config.get("zc_allocation_weight", 0)
+
         layers: int = config["layers"]
         num_heads: int = config["num_heads"]
         pos_embedding_type: str = config.get("pos_embedding_type", "absolute")
@@ -121,8 +130,8 @@ class DecoderTransformer(nn.Module):
         else:
             raise ValueError(f"Incorrect type of positional embedding {pos_embedding_type}")
 
-        def make_ff_function() -> Union[FFN, MoE, ExpertChoiceMoE]:
-            ff_function: Union[None, FFN, MoE, ExpertChoiceMoE] = None
+        def make_ff_function() -> Union[FFN, MoE, ExpertChoiceMoE, MoEPlusPlus]:
+            ff_function: Union[None, FFN, MoE, ExpertChoiceMoE, MoEPlusPlus] = None
             if ff_function_type == "MoEDecoderTransformer":
                 if routing_type == "MoE":
                     ff_function = MoE(
@@ -136,6 +145,20 @@ class DecoderTransformer(nn.Module):
                         capacity_factor,
                         batch_size,
                         max_len,
+                    )
+                elif routing_type == "MoEPlusPlus":
+                    ff_function = MoEPlusPlus(
+                        emb_dim,
+                        ff_dim,
+                        routed_experts,
+                        num_zero_experts,
+                        num_identity_experts,
+                        num_constant_experts,
+                        top_k_routers,
+                        capacity_factor,
+                        batch_size,
+                        max_len,
+                        zc_allocation_weight
                     )
                 else:
                     raise ValueError(f"Incorrect routing type {routing_type}")
