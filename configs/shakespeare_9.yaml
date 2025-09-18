@@ -23,10 +23,10 @@ model:
     num_layers: 4
     feedforward_dimension: 128
     shared_experts: 0
-    num_experts: 8 # total experts
-    num_zero_experts: 1
-    num_identity_exerpts: 1
-    num_constant_experts: 1
+    num_experts: 12 # total experts
+    num_zero_experts: 3
+    num_identity_experts: 2
+    num_constant_experts: 2
     zc_allocation_weight: 0.75
     top_k_routers: 3
     routing_type: "MoEPlusPlus"
