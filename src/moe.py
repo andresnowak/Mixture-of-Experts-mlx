@@ -7,6 +7,7 @@ import numpy as np
 from .aux_losses import compute_expert_load_balance_loss
 from .mlx_extension import one_hot
 
+
 class FFN(nn.Module):
     def __init__(self, hidden_dim: int, ff_dim: int):
         super().__init__()
@@ -16,6 +17,40 @@ class FFN(nn.Module):
 
     def __call__(self, x: mx.array) -> mx.array:
         return self.ff_2(mx.maximum(self.ff_1(x), 0))
+
+
+class FFNZeroExpert(nn.Module):
+    def __init__(self, hidden_dim: int, ff_dim: int):
+        super().__init__()
+
+    def __call__(self, x: mx.array) -> mx.array:
+        return mx.zeros_like(x)
+
+
+class FFNIdentityExpert(nn.Module):
+    def __init__(self, hidden_dim: int, ff_dim: int):
+        super().__init__()
+
+    def __call__(self, x: mx.array) -> mx.array:
+        return x
+
+
+class FFNConstantExpert(nn.Module):
+    def __init__(self, hidden_dim: int, ff_dim: int):
+        super().__init__()
+
+        self.W_c = nn.Linear(hidden_dim, 2)  # W_c^{2 \times D}, W_c: R^{D} -> R^{2}
+        self.v = mx.random.uniform(
+            shape=[hidden_dim]
+        )  # trainable constant vector v in R^{D}
+
+    def __call__(self, x: mx.array) -> mx.array:
+        scores_x_and_v = mx.softmax(self.W_c(x), axis=-1)
+
+        alpha_1 = scores_x_and_v[..., 0]
+        alpha_2 = scores_x_and_v[..., 1]
+
+        return x * alpha_1 + self.v * alpha_2
 
 
 class MoE(nn.Module):
@@ -75,15 +110,19 @@ class MoE(nn.Module):
             )
         )[..., : self.top_k_routers + self.shared_experts]
 
-        return self.__naive(x, experts_affinity, experts_indices, return_load_balance_loss)
+        return self.__naive(
+            x, experts_affinity, experts_indices, return_load_balance_loss
+        )
 
     def __naive(
-        self, x: mx.array, experts_affinity: mx.array, experts_indices: mx.array, return_load_balance_loss: bool = False
+        self,
+        x: mx.array,
+        experts_affinity: mx.array,
+        experts_indices: mx.array,
+        return_load_balance_loss: bool = False,
     ) -> mx.array | Tuple[mx.array, mx.array]:
         batch, seq_len, emb_dim = x.shape
         num_tokens = batch * seq_len
-
-        # Route the computations
 
         selected_experts_affinity = mx.take_along_axis(
             experts_affinity, experts_indices, axis=-1
