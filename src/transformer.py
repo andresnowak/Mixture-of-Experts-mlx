@@ -219,7 +219,8 @@ class DecoderTransformer(nn.Module):
             x, extra_results = transformer_block(x, attn_mask, return_aux_loss, use_gating_routing_scores_residuals=use_gating_routing_scores_residuals, score_logits=prev_score_logits)
             aux_loss = extra_results["aux_loss"]
 
-            total_aux_loss = total_aux_loss + aux_loss
+            if return_aux_loss:
+                total_aux_loss = total_aux_loss + aux_loss
             prev_score_logits = extra_results["score_logits"]
 
         x = self.proj_ff(x)  # raw logits in the form (batch, seq_len, vocab_dim)
