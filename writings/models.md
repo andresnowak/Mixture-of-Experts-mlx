@@ -1,4 +1,4 @@
-## [DeepSeek-MoE]()
+## [DeepSeek-MoE](https://arxiv.org/abs/2401.06066)
 <img src="../images/deepseek-moe.png" width="600px" alt="Image from the paper"></img>
 
 The two important contributions of DeepSeek-MoE are
