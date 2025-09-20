@@ -147,3 +147,67 @@ They find that the activation of FFN experts is not decided by simpler tasks. Be
 
 
 **Note**: I don't know if in the end a normal MoE transformer that has a lot of finely grained experts can basically also learn this experts. **Like for 256 experts, maybe 20 of them will have some of this zero-computation expert behavior**
+
+
+## [GPT-OSS](https://arxiv.org/pdf/2508.10925)
+
+<img src="../images/deepseek-moe.png" width="600px" alt="Image from the paper"></img>
+
+The GPT-OSS models are designed to be used within agentic workflows with strong instruction following, tool use and reasoning capabilities
+- 120B model with 36 layers with 5.1B active parameters per token
+- 20B model with 24 layers with 3.B active parameters
+- And the reasoning capability can be adjusted by specifying in the prompt the amount of reasoning (e.g. low, medium or high)
+
+#### MoE
+- The 120B model has 128 experts with top-4 experts
+- The 20B model has 32 with top-4 experts
+
+The MoE models use the gated SwiGLU activation function (*but the input is not divided in half when being passed to the two linear layers*)
+
+#### Attention
+- For the attention blocks they alternate between banded window and fully dense patterns, where the bandwidth is 128 tokens.
+- Each layer has 64 query heads of dimension 64 and uses the Grouped query attention with 8 key-value heads.
+- And the important thing is that each attention head has a learned bias in the denominator fo the softmax (*so as to let softmax give 0 mass to all tokens to not pay attention to any tokens*), similar to off-by-one attention and attention sinks.
+
+The attention formula is this:
+$$P_i = \frac{e^{S_i}}{\sum_j e^{s_j} + \text{Bias}} = \frac{e^{S_i}}{\sum_j e^{s_j} + e^{b}}$$
+where $\text{Bias} \in R^{\text{n\_heads} \times 1}$, and $b$ is the logit for the bias (this is the weight in the model). You can consider $b$ as another token basically that helps the model give 0 mass to the other tokens by giving the mass to this $b$ sink token
+
+### Pretraining
+For the pretraining they where focused on data of STEM, coding and general knowledge.
+
+### Post-training
+For the post training they do:
+- Uses CoT RL similar to o3, and they teach the model how to reason, solve problems and how to use tools.
+- The training dataset consists of problems from coding, math, science and more
+
+### Harmony chat format (I don't know if this is also used in other OpenAI models)
+And another important thing of this model is their idea for the chat format they use a chat format that gives special tokens to delineate message boundaries and uses keyword arguments (e.g., User and Assistant) to indicate message authors and recipients. In the end the roles structure lets the model have a role-based information hierarchy to resolve instruction conflicts: System > Developer > User > Assistant > Tool.
+
+The format also introduces the idea of "channels" to indicate the visibility for each message, e.g. *analysis* is for CoT tokens, *commentary* is for function tool calling and *final* for answers shown to users. This format lets the model have advanced agentic features including interleaving tools calls within the CoT or providing preambles that outline longer action plans to the user.
+
+```
+<|start|>assistant
+<|channel|>analysis
+<|message|>I need Tokyo’s weather to answer—time to call the weather API.<|end|>
+
+<|start|>assistant
+<|channel|>commentary to=functions.get_weather
+<|message|>{"location":"Tokyo"}
+<|call|>
+
+<|start|>functions.get_weather to=assistant
+<|channel|>commentary
+<|message|>{"temp":22,"condition":"sunny"}
+<|end|>
+
+<|start|>assistant
+<|channel|>analysis
+<|message|>OK, it’s 22 °C and sunny—now form the final reply.<|end|>
+
+<|start|>assistant
+<|channel|>final
+<|message|>It’s 22 °C and sunny in Tokyo right now!<|return|>
+```
+
+Here in this example you can see why it is possible for the model to do tool calling while reasoning, thanks to the idea of channels it can correctly separate when it is reasnoning and when it is answering to the user in the end
