@@ -47,3 +47,67 @@ def one_hot(x: mx.array, num_classes: int):
     one_hot = eye_mat[x.reshape(-1)]  # (orig_shape.flatten(), num_classes)
 
     return one_hot.reshape(*orig_shape, num_classes)
+
+@mx.compile
+def sink_softmax(x: mx.array, sinks: mx.array):
+    """
+    Biased denominator in Softmax.
+
+    Parameters
+    ----------
+    x : array
+        Input sequence of shape (batch, num_heads, seq_len).
+    sinks : array
+        bias for the denominator of shape (num_heads, 1)
+        You can see the sink as a bias to the softmax denominator, and you can see it simply as another token (and we have one bias per head)
+
+    Returns
+    -------
+    array
+        Output tensor of shape  (batch, num_heads, seq_len)
+    """
+
+    _, num_heads, _ = x.shape
+
+    s = sinks.reshape(1, num_heads, 1)  # -> (B, H, 1)
+
+    logits_aug = mx.concatenate([x, s], axis=-1)        # (B, H, T+1)
+
+    probs = mx.softmax(logits_aug, axis=-1)
+
+    probs = probs[..., :-1]
+
+    return probs
+
+
+# @mx.compile
+# def sink_softmax(x: mx.array, sinks: mx.array):
+#     """
+#     Biased denominator in Softmax.
+
+#     Parameters
+#     ----------
+#     x : array
+#         Input sequence of shape (batch, num_heads, seq_len).
+#     sinks : array
+#         bias for the denominator of shape (num_heads, 1)
+#         You can see the sink as a bias to the softmax denominator, and you can see it simply as another token (and we have one bias per head)
+
+#     Returns
+#     -------
+#     array
+#         Output tensor of shape  (batch, num_heads, seq_len)
+#     """
+
+#     _, num_heads, _ = x.shape
+
+#     s = sinks.reshape(1, num_heads, 1)  # -> (B, H, 1)
+
+#     logits_aug = mx.concatenate([x, s], axis=-1)        # (B, H, T+1)
+
+#     shift = mx.max(logits_aug, axis=-1, keepdims=True)  # for stability
+#     exp_x = mx.exp(x - shift)                           # numerator: exp(s_i - m)
+#     exp_sink = mx.exp(s - shift)                        # exp(b - m)
+#     denom = mx.sum(exp_x, axis=-1, keepdims=True) + exp_sink
+
+#     return exp_x / denom                                # shape (B, H, T)
