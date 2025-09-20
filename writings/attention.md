@@ -29,27 +29,35 @@ Here $\sigma(XW_\theta)$ acts as a dynamic filter, controlling the information f
 Now lets remember **Multi-head attention**:
 In multi-head attention, the output of the i-th token, corresponding to the k-the head can be expressed as:
 - $$ o_i^{(k)} = \left( \sum_{j=0}^{i} S_{ij}^{(k)} \, X_j \, W_V^{(k)} \right) W_O^{(k)} = \sum_{j=0}^{i} S_{ij}^{(k)} \, X_j \left( W_V^{(k)} W_O^{(k)} \right)$$
-  - Where 
+  - Where
   	- $W_O^k$ is basically a slice of $W_O$ corresponding to the k-th head $W_O^k \in R^{hd_v \times d_{model}}$
-  	- $S^k_{i,j}$ are the attention scores and $X_j$ is the input to the attention for token $j$ 
+  	- $S^k_{i,j}$ are the attention scores and $X_j$ is the input to the attention for token $j$
   - This shows that $W^k_V W^k_O$ can be merged into one low-rank linear mapping applied overall $X_j$ as $d_k$ < $d_model$ and this reduces the expressiveness (as we can only work in a lower dimension)
   - So their theory with gating is that doing $\text{Non-Linearity-Map}(X_jW_V^k)$ or $\text{Non-Lineartiy-Map}(\sum^i_{j=0} s^k_{i,j} \cdot X_j W_V^k)W^k_O$ helps improve the expressiveness mitigating the low-rank problem.
-  - And this finding helps explain why in their experiments adding the gating after $W_o$ has no effect, and it is because it doesn't help address this lack of non-linearity in $W_V$ and $W_o$ 
+  - And this finding helps explain why in their experiments adding the gating after $W_o$ has no effect, and it is because it doesn't help address this lack of non-linearity in $W_V$ and $W_o$
 
 
 #### And what did they found in the end:
 In the end they found that doing head specific gating works the best and the two best methods they found that give the best results (reducing PPL by 0.2 and increasing MMLU score by 5 points) are:
 - Value gating
-  - In value gating we do 
+  - In value gating we do
     - $\text{gate} = \sigma(XW_\theta)$
       - Where $W_\theta \in R^{d_{model} \times \text{number of heads}}$ and $X$ is our input to the Attention layer
       - And $\sigma$ is the sigmoid unction
     - Then we do the gating $\text{Value gating} = V \odot \text{gate}$
     - And finally we have $\text{Attention score} = (\text{Attention} @ \text{Value gating})$ and then we do $\text{Attention score} @ W_o$
-  - When doing value gating the scores are derived from the past hidden states associated to the keys and values, because we first do the value gating and then we obtain the attention score multiplying by the value gates, we have to remember that Attention is a lower diagonal matrix (as we mask the future tokens) when doing matrix multiplication with V all the tokens get added. 
+  - When doing value gating the scores are derived from the past hidden states associated to the keys and values, because we first do the value gating and then we obtain the attention score multiplying by the value gates, we have to remember that Attention is a lower diagonal matrix (as we mask the future tokens) when doing matrix multiplication with V all the tokens get added.
 - Scaled Dot Production Attention gating (this is the method that gives the best results)
 	- Here we do
     	- $\text{gate} = \sigma(XW_\theta)$
       	-  Then we do the gating $\text{Attention score gating} = \text{Attention score} \odot \text{gate}$
       	-  Finally we do $\text{Attention score gating} @ W_o$
    	-  Here instead the gating scores are derived from the query values, because we only do the Hadamard product from the gate with the already obtained attention scores, so this is dependent on only on each singular token, and then we finally do the output projection to combine the results of each head
+
+
+## Biased Attention [paper](https://arxiv.org/pdf/2508.10925):
+This version of attention comes from the GPT-OSS architecture. Here they try to mitigate the attention sink problem using techniques similar to the [attention-of-by-one](https://www.evanmiller.org/attention-is-off-by-one.html) and [EFFICIENT STREAMING LANGUAGE MODELS WITH ATTENTION SINKS](https://arxiv.org/abs/2309.17453).
+
+Here the idea is that we add a bias to the denominator in the softmax, so as to let the mass of other tokens go to zero, in a way this bias is just an attention sink, but here we have this bias per each head of the MultiHeadAttention
+
+The attention formula here is $$P_i = \frac{e^{S_i}}{\sum_j e^{s_j} + \text{Bias}} = \frac{e^{S_i}}{\sum_j e^{s_j} + e^{b}}$$ where $\text{Bias} \in R^{\text{n\_heads} \times 1}$, and $b$ is the logit for the bias (this is the weight in the model). You can consider $b$ as another token basically that helps the model give 0 mass to the other tokens by giving the mas to this $b$ sink token
