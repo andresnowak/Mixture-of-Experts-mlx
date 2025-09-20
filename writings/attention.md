@@ -60,4 +60,6 @@ This version of attention comes from the GPT-OSS architecture. Here they try to 
 
 Here the idea is that we add a bias to the denominator in the softmax, so as to let the mass of other tokens go to zero, in a way this bias is just an attention sink, but here we have this bias per each head of the MultiHeadAttention
 
-The attention formula here is $$P_i = \frac{e^{S_i}}{\sum_j e^{s_j} + \text{Bias}} = \frac{e^{S_i}}{\sum_j e^{s_j} + e^{b}}$$ where $\text{Bias} \in R^{\text{n\_heads} \times 1}$, and $b$ is the logit for the bias (this is the weight in the model). You can consider $b$ as another token basically that helps the model give 0 mass to the other tokens by giving the mas to this $b$ sink token
+The attention formula is this:
+$$P_i = \frac{e^{S_i}}{\sum_j e^{s_j} + \text{Bias}} = \frac{e^{S_i}}{\sum_j e^{s_j} + e^{b}}$$
+where $\text{Bias} \in R^{\text{n\_heads} \times 1}$, and $b$ is the logit for the bias (this is the weight in the model). You can consider $b$ as another token basically that helps the model give 0 mass to the other tokens by giving the mas to this $b$ sink token
