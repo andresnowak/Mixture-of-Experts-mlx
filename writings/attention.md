@@ -74,6 +74,7 @@ DSA consists of two things:
 		- $H^I$ is a smaller number
 		- And we have $W_Q \in R^{d\_model, H^I \cdot d\_indexer}$, $W_K \in R^{d\_model, d\_indexer}$, $W_W \in R^{d\_model, H^I}$, with this weights we derive $q, w$ and $k$
 	- Here the shape of our indexer score will be in the end of size $R^{seq\_len, seq\_len}$, when we apply it to our input $x$ of shape ($(batch, seq\_len, emb\_dim))$
+	- The lightning indexer is still $O(L^2)$ it just needs less computation than something like MLA
 - The Fine-grained token selection:
 	- Given the index scores $\{I_{t,s}\}$ for each query token $h_t$, we retrieves only the key-value entries $\{c_s\}$ corresponding to the top-k index scores
 		- **In their github and in huggingface implementation they only apply a mask instead of doing the sparse operation (so they just mask out the non important key-value pairs**)
