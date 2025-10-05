@@ -63,3 +63,21 @@ Here the idea is that we add a bias to the denominator in the softmax, so as to 
 The attention formula is this:
 $$P_i = \frac{e^{S_i}}{\sum_j e^{s_j} + \text{Bias}} = \frac{e^{S_i}}{\sum_j e^{s_j} + e^{b}}$$
 where $\text{Bias} \in R^{\text{n\_heads} \times 1}$, and $b$ is the logit for the bias (this is the weight in the model). You can consider $b$ as another token basically that helps the model give 0 mass to the other tokens by giving the mas to this $b$ sink token
+
+
+## Deepseek Sparse Attention [paper](https://github.com/deepseek-ai/DeepSeek-V3.2-Exp/blob/main/DeepSeek_V3_2.pdf):
+
+DSA consists of two things:
+- A lighting indexer
+	- This computes the index score $I_{t,s}$ between the query token $h_t \in R^{d\_model}$ and a preceding token $h_s \in R^{d\_model}$, determining which tokens to be selecting by the query token $$I_{t,s} = \sum^{H^I}_{j=1} w^I_{t,j} \cdot ReLU(q_{t,j}^I \cdot k^I_s)$$
+		- Where $H^I$ is the number of indexer heads; $q^I_{t,j} \in R^{d^I}$ and $w^I_{t,j} \in R$ are derived from the query token $h_t$; and $k^I_s$ is derived from the preceding token $h_s$. $ReLU$ was chosen as the activation function for throughput consideration.
+		- $H^I$ is a smaller number
+		- And we have $W_Q \in R^{d\_model, H^I \cdot d\_indexer}$, $W_K \in R^{d\_model, d\_indexer}$, $W_W \in R^{d\_model, H^I}$, with this weights we derive $q, w$ and $k$
+	- Here the shape of our indexer score will be in the end of size $R^{seq\_len, seq\_len}$, when we apply it to our input $x$ of shape ($(batch, seq\_len, emb\_dim))$
+- The Fine-grained token selection:
+	- Given the index scores $\{I_{t,s}\}$ for each query token $h_t$, we retrieves only the key-value entries $\{c_s\}$ corresponding to the top-k index scores
+		- **In their github and in huggingface implementation they only apply a mask instead of doing the sparse operation (so they just mask out the non important key-value pairs**)
+		- So the idea is that from the index score $I$, you will only select top_k of a sequence (for all the masked sequences we have), so we are left with a matrix of size $\text{Top-k}(I) \in R^{batch, seq\_len, seq\_len}$
+	- So now the attention output $u_t$ is computed by applying the attention mechanism between the query token $h_t$ and the sparsely selected key-value entries $\{c_s\}$
+		- $$u_t = Attn(h_t, \{c_s | I_{t,s} \in \text{Top-k}(I_{t,:})\})$$
+	- This makes it so that now we can have the complexity of attention be $O(Lk)$ where $k \ll L$
