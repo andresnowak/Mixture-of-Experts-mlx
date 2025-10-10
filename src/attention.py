@@ -141,7 +141,7 @@ class DeepSeekSparseAttention(MultiHeadAttention):
     def _indexer(self, x: mx.array) -> mx.array:
         # x has shape (batch_size, seq_len, emb_dim)
 
-        # NOTE: Missing here also applying the Rope
+        # NOTE: Missing here also partially applying Rope
 
         # 1. Calculate q, k, and w
         # Note the fix: use self.wk for keys
