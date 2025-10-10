@@ -201,7 +201,8 @@ class DeepSeekSparseAttention(MultiHeadAttention):
         # NOTE: this is just sparse attention, we are not reducintg complexity here from O(L^2) to O(Lk)
         # topk_indices = mx.expand_dims(topk_indices, axis=1) # (batch, 1, seq_len, top_k)
 
-        # index_mask = mx.full(shape=(batch, seq_len seq_len), vals=-float("inf"), dtype=x.dtype)
+        # index_mask: mx.array = mx.full(shape=(batch, seq_len seq_len), vals=-float("inf"), dtype=x.dtype)
+        # index_mask[:, topk_indices] = 0.0
         # index_mask += attn_mask # now the masking is not triangluar, it now also in each row (so the 0 until present, and then everything else masked) now also has values that are masked in between
 
         # attention = self._compute_attention(Q, K, V, index_mask)
