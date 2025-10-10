@@ -131,7 +131,9 @@ class DeepSeekSparseAttention(MultiHeadAttention):
     def __init__(self, max_seq_len: int, emb_dim: int, num_heads: int, bias: bool=True, use_rope: bool=False):
         super().__init__(max_seq_len, emb_dim, num_heads, bias, use_rope)
 
-        self.index_n_heads: int = num_heads # NOTE: This doesn't ahve to be the same as the amoutn of heads in attention
+        # Note: in DSA the index weights can have a different emb_dim (so different head_dim using index_emb_dim)
+
+        self.index_n_heads: int = num_heads # NOTE: This doesn't ahve to be the same as the amount of heads in attention
         self.index_topk: int = max_seq_len // 2 # NOTE: This part I don't know what topk should be used
         self.index_head_dim = self.emb_dim // self.index_n_heads
         self.wq = nn.Linear(self.emb_dim, self.index_n_heads * self.index_head_dim, bias=True)
